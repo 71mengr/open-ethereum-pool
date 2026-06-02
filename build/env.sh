@@ -24,6 +24,17 @@ GOPATH="$workspace"
 GOBIN="$PWD/build/bin"
 export GOPATH GOBIN
 
+# RandomX support - preserve CGO flags if set
+if [ -n "$CGO_ENABLED" ]; then
+    export CGO_ENABLED
+fi
+if [ -n "$CGO_CFLAGS" ]; then
+    export CGO_CFLAGS
+fi
+if [ -n "$CGO_LDFLAGS" ]; then
+    export CGO_LDFLAGS
+fi
+
 # Run the command inside the workspace.
 cd "$ethdir/open-ethereum-pool"
 PWD="$ethdir/open-ethereum-pool"

@@ -115,3 +115,79 @@ func (s *ProxyServer) fetchPendingBlock() (*rpc.GetBlockReplyPart, uint64, int64
 	}
 	return reply, blockNumber, blockDiff, nil
 }
+
+func (s *ProxyServer) getRandomXSeedHash(height uint64) (string, error) {
+    var seedHash string
+    err := s.rpc().Call(&seedHash, "randomx_getSeedHash", height)
+    return seedHash, err
+}
+
+func (s *ProxyServer) fetchRandomXBlockTemplate() {
+    rpc := s.rpc()
+    t := s.currentBlockTemplate()
+    
+    reply, err := rpc.GetWork()
+    if err != nil {
+        log.Printf("Error while refreshing RandomX block template on %s: %s", rpc.Name, err)
+        return
+    }
+    
+    // Get current height for epoch calculation
+    height := s.getCurrentHeight()
+    if height == 0 {
+        return
+    }
+    
+    seedHash, err := s.getRandomXSeedHash(height)
+    if err != nil {
+        log.Printf("Error getting RandomX seed hash: %v", err)
+        return
+    }
+    
+    // No need to update, we have fresh job
+    if t != nil && t.Header == reply[0] {
+        return
+    }
+    
+    newTemplate := BlockTemplate{
+        Header:     reply[0],
+        Seed:       seedHash,
+        Target:     reply[2],
+        Height:     height,
+        Difficulty: util.TargetHexToDiff(reply[2]),
+        headers:    make(map[string]heightDiffPair),
+    }
+    
+    newTemplate.headers[reply[0]] = heightDiffPair{
+        diff:   newTemplate.Difficulty,
+        height: height,
+    }
+    
+    if t != nil {
+        for k, v := range t.headers {
+            if v.height > height-maxBacklog {
+                newTemplate.headers[k] = v
+            }
+        }
+    }
+    
+    s.blockTemplate.Store(&newTemplate)
+    log.Printf("New RandomX block to mine on %s at height %d / %s", rpc.Name, height, reply[0][0:10])
+    
+    if s.config.Proxy.Stratum.Enabled {
+        go s.broadcastNewJobs()
+    }
+}
+
+func (s *ProxyServer) getCurrentHeight() uint64 {
+    var result string
+    err := s.rpc().Call(&result, "eth_blockNumber")
+    if err != nil {
+        return 0
+    }
+    height, err := strconv.ParseUint(strings.Replace(result, "0x", "", -1), 16, 64)
+    if err != nil {
+        return 0
+    }
+    return height
+}

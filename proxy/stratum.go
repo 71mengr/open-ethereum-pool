@@ -219,3 +219,15 @@ func (s *ProxyServer) broadcastNewJobs() {
 	}
 	log.Printf("Jobs broadcast finished %s", time.Since(start))
 }
+
+func (cs *Session) handleGetWorkRPC(s *ProxyServer) ([]string, *ErrorReply) {
+    t := s.currentBlockTemplate()
+    if t == nil || len(t.Header) == 0 {
+        return nil, &ErrorReply{Code: -1, Message: "Work not ready"}
+    }
+    
+    // For RandomX, we need to include the seed hash
+    // Standard eth_getWork returns [header, seed, target]
+    reply := []string{t.Header, t.Seed, t.Target}
+    return reply, nil
+}

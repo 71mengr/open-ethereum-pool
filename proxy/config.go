@@ -28,6 +28,14 @@ type Config struct {
 	NewrelicEnabled bool   `json:"newrelicEnabled"`
 }
 
+type RandomXConfig struct {
+    Enabled        bool   `json:"enabled"`
+    EpochLength    uint64 `json:"epochLength"`
+    CacheSizeMB    uint64 `json:"cacheSizeMB"`
+    DatasetSizeGB  uint64 `json:"datasetSizeGB"`
+    MinMemory      uint64 `json:"minMemory"`
+}
+
 type Proxy struct {
 	Enabled              bool   `json:"enabled"`
 	Listen               string `json:"listen"`
@@ -45,6 +53,8 @@ type Proxy struct {
 	HealthCheck bool  `json:"healthCheck"`
 
 	Stratum Stratum `json:"stratum"`
+
+        RandomX RandomXConfig `json:"randomx"`
 }
 
 type Stratum struct {
