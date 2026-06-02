@@ -1,0 +1,33 @@
+diff --git a/randomx/randomx_stub.go b/randomx/randomx_stub.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e75b5cf3244e918af4c078acc72ebf63df12a12
+--- /dev/null
++++ b/randomx/randomx_stub.go
+@@ -0,0 +1,26 @@
++//go:build !randomx || !cgo
++
++package randomx
++
++const FlagFullMem = 0
++
++type Cache struct{}
++
++type VM struct{}
++
++func NewCache(_ []byte) *Cache {
++    return nil
++}
++
++func NewVM(_ *Cache, _ interface{}, _ int) *VM {
++    return nil
++}
++
++func (vm *VM) CalculateHash(_, _ []byte) {
++}
++
++func (vm *VM) Close() {
++}
++
++func (cache *Cache) Close() {
++}
+

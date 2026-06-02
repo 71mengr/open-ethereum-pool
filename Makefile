@@ -38,7 +38,7 @@ all: randomx
 	@echo "CGO_CFLAGS=$(CGO_CFLAGS)"
 	@echo "CGO_LDFLAGS=$(CGO_LDFLAGS)"
 	build/env.sh go mod download
-	CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" build/env.sh go build -v -o $(GOBIN)/open-ethereum-pool main.go
+	CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" build/env.sh go build -tags randomx -v -o $(GOBIN)/open-ethereum-pool main.go
 	@echo "Build complete! Binary: $(GOBIN)/open-ethereum-pool"
 
 # Build without RandomX (Ethash only)
@@ -65,7 +65,7 @@ clean-all: clean
 
 # Quick build with verbose output
 debug: randomx
-	CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" build/env.sh go build -v -x -o $(GOBIN)/open-ethereum-pool main.go
+	CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" build/env.sh go build -tags randomx -v -x -o $(GOBIN)/open-ethereum-pool main.go
 
 # Build for specific RandomX flags (AVX2)
 randomx-avx2: clean-randomx

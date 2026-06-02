@@ -1,6 +1,10 @@
+//go:build randomx && cgo
+
 package randomx
 
 /*
+#cgo CFLAGS: -I../build/_workspace/RandomX/src
+#cgo LDFLAGS: -L../build/_workspace/RandomX/build -lrandomx -lstdc++ -lm
 #include <stdlib.h>
 #include "randomx.h"
 */
