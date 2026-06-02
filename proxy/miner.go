@@ -42,7 +42,7 @@ func (s *ProxyServer) verifyRandomXShare(headerHash, nonce, resultHash []byte, t
                 return false, err
         }
         
-        cache, err := s.randomxManager.GetCache(epoch, seedHash)
+        cache, err := s.randomxManager.GetCache(epoch, hexToBytes(seedHash))
         if err != nil {
                 log.Printf("Failed to get RandomX cache: %v", err)
                 return false, err

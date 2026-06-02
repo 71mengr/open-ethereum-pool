@@ -1,13 +1,10 @@
 package proxy
 
 import (
-    "bytes"
-    "encoding/binary"
     "fmt"
-    "math/big"
     "sync"
 
-    randomx "github.com/tevador/randomx"
+    randomx "github.com/sammy007/open-ethereum-pool/randomx"
 )
 
 const (
@@ -24,26 +21,15 @@ type RandomXCache struct {
 }
 
 type RandomXManager struct {
-    caches     map[uint64]*RandomXCache
-    mu         sync.RWMutex
-    rpc        *rpc.RPCClient
+    caches       map[uint64]*RandomXCache
+    mu           sync.RWMutex
     currentEpoch uint64
 }
 
-func NewRandomXManager(rpc *rpc.RPCClient) *RandomXManager {
+func NewRandomXManager() *RandomXManager {
     return &RandomXManager{
         caches: make(map[uint64]*RandomXCache),
-        rpc:    rpc,
     }
-}
-
-func (m *RandomXManager) GetSeedHash(height uint64) ([]byte, error) {
-    var seedHash string
-    err := m.rpc.Call(&seedHash, "randomx_getSeedHash", height)
-    if err != nil {
-        return nil, fmt.Errorf("failed to get seed hash: %v", err)
-    }
-    return hexToBytes(seedHash), nil
 }
 
 func (m *RandomXManager) GetCache(epoch uint64, seedHash []byte) (*RandomXCache, error) {
@@ -65,7 +51,14 @@ func (m *RandomXManager) GetCache(epoch uint64, seedHash []byte) (*RandomXCache,
     
     // Create new cache
     randomxCache := randomx.NewCache(seedHash)
+    if randomxCache == nil {
+        return nil, fmt.Errorf("failed to create RandomX cache")
+    }
     vm := randomx.NewVM(randomxCache, nil, randomx.FlagFullMem)
+    if vm == nil {
+        randomxCache.Close()
+        return nil, fmt.Errorf("failed to create RandomX VM")
+    }
     
     cache = &RandomXCache{
         cache: randomxCache,
@@ -76,7 +69,10 @@ func (m *RandomXManager) GetCache(epoch uint64, seedHash []byte) (*RandomXCache,
     
     // Clean old caches
     if epoch > 2 {
-        delete(m.caches, epoch-2)
+        if oldCache, ok := m.caches[epoch-2]; ok {
+            oldCache.Close()
+            delete(m.caches, epoch-2)
+        }
     }
     
     return cache, nil
@@ -101,15 +97,4 @@ func (c *RandomXCache) Close() {
     defer c.mu.Unlock()
     c.vm.Close()
     c.cache.Close()
-}
-
-func hexToBytes(hex string) []byte {
-    if len(hex) >= 2 && hex[:2] == "0x" {
-        hex = hex[2:]
-    }
-    bytes := make([]byte, len(hex)/2)
-    for i := 0; i < len(hex); i += 2 {
-        fmt.Sscanf(hex[i:i+2], "%02x", &bytes[i/2])
-    }
-    return bytes
 }

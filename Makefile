@@ -20,6 +20,7 @@ CGO_LDFLAGS = -L$(RANDOMX_BUILD) -lrandomx -lstdc++ -lm
 # Check if RandomX is already built
 randomx:
 	@if [ ! -f $(RANDOMX_LIB) ]; then \
+		set -e; \
 		echo "Building RandomX library..."; \
 		mkdir -p build/_workspace; \
 		if [ ! -d $(RANDOMX_DIR) ]; then \
@@ -36,13 +37,13 @@ all: randomx
 	@echo "Building open-ethereum-pool with RandomX support..."
 	@echo "CGO_CFLAGS=$(CGO_CFLAGS)"
 	@echo "CGO_LDFLAGS=$(CGO_LDFLAGS)"
-	build/env.sh go get -v ./...
+	build/env.sh go mod download
 	CGO_ENABLED=$(CGO_ENABLED) CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" build/env.sh go build -v -o $(GOBIN)/open-ethereum-pool main.go
 	@echo "Build complete! Binary: $(GOBIN)/open-ethereum-pool"
 
 # Build without RandomX (Ethash only)
 all-legacy:
-	build/env.sh go get -v ./...
+	build/env.sh go mod download
 	build/env.sh go build -v -o $(GOBIN)/open-ethereum-pool main.go
 
 test: all
