@@ -1,7 +1,7 @@
 {
   "name": "open-ethereum-pool",
   "version": "0.0.0",
-  "description": "Open Ethereum Pool",
+  "description": "TKM RandomX Mining Pool",
   "private": true,
   "directories": {
     "doc": "doc",
@@ -12,9 +12,8 @@
     "start": "ember server",
     "test": "ember test"
   },
-  "repository": "",
   "engines": {
-    "node": ">= 0.12.0"
+    "node": ">= 6.0.0"
   },
   "author": "",
   "license": "MIT",
@@ -39,8 +38,7 @@
     "ember-load-initializers": "^0.5.1",
     "ember-resolver": "^2.0.3",
     "ember-welcome-page": "^1.0.3",
-    "loader.js": "^4.0.10",
-    "ember-intl": "2.15.1",
-    "ember-cli-cookie": "^0.2.0"
+    "intl-format-cache": "^2.2.0",
+    "loader.js": "^4.0.10"
   }
 }

@@ -1,20 +1,62 @@
 <div class="container">
-  <div class="page-header">
-    <h1>About</h1>
+  <div class="row">
+    <div class="col-md-12">
+      <h2>About TKM Mining Pool</h2>
+      <hr/>
+      
+      <div class="panel panel-default">
+        <div class="panel-heading">
+          <h3 class="panel-title">Pool Information</h3>
+        </div>
+        <div class="panel-body">
+          <dl class="dl-horizontal">
+            <dt>Coin</dt>
+            <dd>TKM (RandomX)</dd>
+            <dt>Algorithm</dt>
+            <dd>RandomX</dd>
+            <dt>Block Time</dt>
+            <dd>120 seconds</dd>
+            <dt>Pool Fee</dt>
+            <dd>1%</dd>
+            <dt>Payout System</dt>
+            <dd>PPLNS (Pay Per Last N Shares)</dd>
+            <dt>Payout Threshold</dt>
+            <dd>0.5 TKM</dd>
+            <dt>Stratum Port</dt>
+            <dd>8008</dd>
+          </dl>
+        </div>
+      </div>
+      
+      <div class="panel panel-default">
+        <div class="panel-heading">
+          <h3 class="panel-title">How to Mine</h3>
+        </div>
+        <div class="panel-body">
+          <h4>Using XMRig</h4>
+          <pre>xmrig --url stratum+tcp://stratum.tkmchain.site:8008 --user YOUR_WALLET_ADDRESS --pass x --algo rx/0</pre>
+          
+          <h4>Using XMRig with TLS</h4>
+          <pre>xmrig --url stratum+ssl://stratum.tkmchain.site:8008 --user YOUR_WALLET_ADDRESS --pass x --algo rx/0</pre>
+          
+          <h4>Multiple Workers</h4>
+          <pre>xmrig --url stratum+tcp://stratum.tkmchain.site:8008 --user YOUR_WALLET_ADDRESS.WORKER_NAME --pass x --algo rx/0</pre>
+        </div>
+      </div>
+      
+      <div class="panel panel-default">
+        <div class="panel-heading">
+          <h3 class="panel-title">Need Help?</h3>
+        </div>
+        <div class="panel-body">
+          <p>Contact us for support:</p>
+          <ul>
+            <li>Email: support@tkmchain.site</li>
+            <li>Telegram: t.me/tkm_pool</li>
+          </ul>
+        </div>
+      </div>
+      
+    </div>
   </div>
-  <h3>Terms of Service</h3>
-  <p>By using the pool you accept all possible risks related to experimental software usage.<br/>
-     Pool owner can't compensate any irreversible losses, but will do his best to prevent worst case.
-  </p>
-  <h3>Details</h3>
-  <p>
-    <ul>
-      <li>Written in Go it's a rocket highly concurrent and low RAM consuming piece of code</li>
-      <li>High performance proxy</li>
-      <li>Payouts and block unlocking module</li>
-      <li>Designed for 100% distributed setup</li>
-      <li>Strict policy module</li>
-      <li>Beautiful modern Ember.js frontend</li>
-    </ul>
-  </p>
 </div>
