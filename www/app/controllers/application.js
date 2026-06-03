@@ -1,12 +1,22 @@
 import Ember from 'ember';
 import config from '../config/environment';
 
+function numberOrZero(value) {
+  var number = Number(value);
+
+  if (!isFinite(number)) {
+    return 0;
+  }
+
+  return number;
+}
+
 export default Ember.Controller.extend({
   get config() {
     return config.APP;
   },
 
-  height: Ember.computed('model.nodes', {
+  height: Ember.computed('bestNode.height', {
     get() {
       var node = this.get('bestNode');
       if (node) {
@@ -22,7 +32,7 @@ export default Ember.Controller.extend({
     }
   }),
 
-  difficulty: Ember.computed('model.nodes', {
+  difficulty: Ember.computed('bestNode.difficulty', {
     get() {
       var node = this.get('bestNode');
       if (node) {
@@ -34,7 +44,7 @@ export default Ember.Controller.extend({
 
   hashrate: Ember.computed('difficulty', {
     get() {
-      return this.getWithDefault('difficulty', 0) / config.APP.BlockTime;
+      return numberOrZero(this.get('difficulty')) / config.APP.BlockTime;
     }
   }),
 
@@ -44,14 +54,16 @@ export default Ember.Controller.extend({
     }
   }),
 
-  bestNode: Ember.computed('model.nodes', {
+  bestNode: Ember.computed('model.nodes.@each.height', {
     get() {
       var node = null;
-      this.get('model.nodes').forEach(function (n) {
+      var nodes = this.get('model.nodes') || [];
+
+      nodes.forEach(function (n) {
         if (!node) {
           node = n;
         }
-        if (node.height < n.height) {
+        if (numberOrZero(node.height) < numberOrZero(n.height)) {
           node = n;
         }
       });

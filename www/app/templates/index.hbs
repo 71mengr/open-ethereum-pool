@@ -17,9 +17,9 @@
         {{/if}}
       </div>
       <div class="col-md-4 stats">
-        <div><i class="fa fa-unlock-alt"></i> Network Difficulty: <span>{{model.nodes.firstObject.difficulty}}</span></div>
-        <div><i class="fa fa-tachometer"></i> Network Hash Rate: <span>{{model.networkHashrate}}</span></div>
-        <div><i class="fa fa-bars"></i> Blockchain Height: <span>{{model.nodes.firstObject.height}}</span></div>
+        <div><i class="fa fa-unlock-alt"></i> Network Difficulty: <span>{{stats.difficulty}}</span></div>
+        <div><i class="fa fa-tachometer"></i> Network Hash Rate: <span>{{format-hashrate stats.hashrate fallback='0.00 H'}}</span></div>
+        <div><i class="fa fa-bars"></i> Blockchain Height: <span>{{format-number stats.height fallback='0'}}</span></div>
       </div>
     </div>
   </div>
