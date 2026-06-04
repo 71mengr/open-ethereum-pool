@@ -269,7 +269,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         formattedParams[2] = mixDigestHex
     }
     
-    log.Printf("Submitting to daemon:")
+    log.Printf("Prepared daemon submit params (only block candidates are sent to daemon):")
     log.Printf("  nonce=%s", formattedParams[0])
     log.Printf("  headerHash=%s...", shortHex(formattedParams[1], 16))
     log.Printf("  mixDigest=%s...", shortHex(formattedParams[2], 16))
@@ -321,6 +321,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         blockCandidate = hashDiff.Cmp(networkDiff) >= 0
     }
     if blockCandidate {
+        log.Printf("Block candidate detected - Hash Diff: %s, Network Diff: %s", hashDiff.String(), networkDiff.String())
         ok, err := s.rpc().SubmitBlock(formattedParams)
         if err != nil {
             log.Printf("SubmitBlock error: %v", err)
@@ -345,6 +346,8 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
 
             return false, true
         }
+    } else {
+        log.Printf("Accepted share is not a block candidate - Hash Diff: %s, Network Diff: %s", hashDiff.String(), networkDiff.String())
     }
 
     // Regular share - record it
