@@ -10,6 +10,15 @@ import (
 
 var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 
+func randomXHashDifficulty(hash []byte) *big.Int {
+    hashLE := reverseBytes(hash)
+    hashBig := new(big.Int).SetBytes(hashLE)
+    if hashBig.Sign() == 0 {
+        return big.NewInt(0)
+    }
+    return new(big.Int).Div(maxUint256, hashBig)
+}
+
 // RandomX verification helper
 func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
     if s.randomxManager == nil {
@@ -65,12 +74,9 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, headerHash, nonce, mi
             if candidate.name != "submitted" {
                 log.Printf("RandomX share matched using %s nonce bytes", candidate.name)
             }
-            hashBig := new(big.Int).SetBytes(expectedHash)
-            if hashBig.Sign() == 0 {
-                return false, nil
-            }
-            hashDiff := new(big.Int).Div(maxUint256, hashBig)
+            hashDiff := randomXHashDifficulty(expectedHash)
 
+            log.Printf("RandomX share difficulty: %s, required: %s", hashDiff.String(), targetDiff.String())
             return hashDiff.Cmp(targetDiff) >= 0, nil
         }
     }
@@ -160,8 +166,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         
         // Check if this share meets network difficulty (block found)
         blockDiff := h.diff
-        hashBig := new(big.Int).SetBytes(resultHash)
-        hashDiff := new(big.Int).Div(maxUint256, hashBig)
+        hashDiff := randomXHashDifficulty(resultHash)
         
         if hashDiff.Cmp(blockDiff) >= 0 {
                 // Block found! Submit to network
