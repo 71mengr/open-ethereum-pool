@@ -118,6 +118,9 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
         {"big-endian", bigEndianNonce},
     }
 
+    var bestHash []byte
+    bestDiff := big.NewInt(0)
+
     for _, candidate := range nonceCandidates {
         expectedHash, err := cache.ComputeHash(headerHash, candidate.bytes)
         if err != nil {
@@ -134,6 +137,10 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
         }
 
         hashDiff := randomXHashDifficulty(expectedHash)
+        if bestHash == nil || hashDiff.Cmp(bestDiff) > 0 {
+            bestHash = expectedHash
+            bestDiff = hashDiff
+        }
         if hashDiff.Cmp(targetDiff) >= 0 {
             log.Printf("✓ Share verified - %s nonce, Hash difficulty: %s, Target: %s",
                 candidate.name, hashDiff.String(), targetDiff.String())
@@ -144,7 +151,7 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
             candidate.name, hashDiff.String(), targetDiff.String())
     }
     log.Printf("✗ RandomX share below target for seed %x and header %x", seedHash[:8], headerHash[:8])
-    return false, nil, nil
+    return false, bestHash, nil
 }
 
 func reverseBytes(input []byte) []byte {
@@ -262,8 +269,6 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         networkDiff = big.NewInt(0)
     }
 
-    log.Printf("Share - Hash Diff: %s, Pool Diff: %s, Network Diff: %s", hashDiff.String(), poolDiff.String(), networkDiff.String())
-
     // eth_submitWork only accepts full block candidates.  Validate normal pool
     // shares locally so valid shares below network difficulty are not rejected
     // by the daemon, as shown by Hash Diff < Network Diff in the logs.
@@ -276,6 +281,9 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         return false, false
     }
     if !validShare {
+        if len(verifiedHash) > 0 {
+            hashDiff = randomXHashDifficulty(verifiedHash)
+        }
         log.Printf("Share REJECTED locally - Hash Diff: %s, Pool Diff: %s", hashDiff.String(), poolDiff.String())
         return false, false
     }
@@ -284,6 +292,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     formattedParams[2] = verifiedMixDigestHex
     verifiedParams := []string{formattedParams[0], formattedParams[1], verifiedMixDigestHex}
     hashDiff = randomXHashDifficulty(verifiedHash)
+    log.Printf("Share - Hash Diff: %s, Pool Diff: %s, Network Diff: %s", hashDiff.String(), poolDiff.String(), networkDiff.String())
 
     // Only submit block candidates to the daemon.  Regular shares have already
     // been verified against the pool difficulty and should be accepted locally.
