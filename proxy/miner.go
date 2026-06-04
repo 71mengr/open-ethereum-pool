@@ -49,7 +49,7 @@ func targetHexToDiff(targetHex string) *big.Int {
 }
 
 // RandomX verification helper - uses the template seed for the cache and the header hash as input
-func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
+func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash, nonce, submittedMixDigest []byte, targetDiff *big.Int) (bool, []byte, error) {
     // Protect manager initialization
     s.randomxMu.Lock()
     if s.randomxManager == nil {
@@ -59,12 +59,12 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
     s.randomxMu.Unlock()
 
     if t == nil {
-        return false, nil
+        return false, nil, nil
     }
 
     height := t.Height
     if height == 0 {
-        return false, nil
+        return false, nil, nil
     }
 
     epochLength := s.config.Proxy.RandomX.EpochLength
@@ -79,11 +79,11 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
     // verification to reject otherwise valid shares with a hash mismatch.
     if len(seedHash) != 32 {
         log.Printf("Invalid seed hash length: %d", len(seedHash))
-        return false, nil
+        return false, nil, nil
     }
     if len(headerHash) != 32 {
         log.Printf("Invalid header hash length: %d", len(headerHash))
-        return false, nil
+        return false, nil, nil
     }
 
     log.Printf("Getting RandomX cache - Height: %d, Epoch: %d, Seed: %x, Header: %x", height, epoch, seedHash[:8], headerHash[:8])
@@ -91,16 +91,16 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
     cache, err := manager.GetCache(epoch, seedHash)
     if err != nil {
         log.Printf("Failed to get RandomX cache: %v", err)
-        return false, err
+        return false, nil, err
     }
 
     if len(nonce) == 0 || len(nonce) > 8 {
         log.Printf("Invalid nonce length: %d", len(nonce))
-        return false, nil
+        return false, nil, nil
     }
-    if len(mixDigest) != 32 {
-        log.Printf("Invalid mix digest length: %d", len(mixDigest))
-        return false, nil
+    if len(submittedMixDigest) != 32 {
+        log.Printf("Invalid mix digest length: %d", len(submittedMixDigest))
+        return false, nil, nil
     }
 
     // Pad nonce to 8 bytes
@@ -123,18 +123,29 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
         expectedHash, err := cache.ComputeHash(headerHash, candidate.bytes)
         if err != nil {
             log.Printf("ComputeHash error with %s nonce: %v", candidate.name, err)
-            return false, err
+            return false, nil, err
         }
 
-        if bytes.Equal(expectedHash, mixDigest) {
-            hashDiff := randomXHashDifficulty(expectedHash)
+        if !bytes.Equal(expectedHash, submittedMixDigest) {
+            if isZeroBytes(submittedMixDigest) {
+                log.Printf("Submitted zero mix digest; using computed RandomX hash for %s nonce", candidate.name)
+            } else {
+                log.Printf("Submitted mix digest mismatch for %s nonce; using computed RandomX hash", candidate.name)
+            }
+        }
+
+        hashDiff := randomXHashDifficulty(expectedHash)
+        if hashDiff.Cmp(targetDiff) >= 0 {
             log.Printf("✓ Share verified - %s nonce, Hash difficulty: %s, Target: %s",
                 candidate.name, hashDiff.String(), targetDiff.String())
-            return hashDiff.Cmp(targetDiff) >= 0, nil
+            return true, expectedHash, nil
         }
+
+        log.Printf("RandomX hash below target with %s nonce - Hash difficulty: %s, Target: %s",
+            candidate.name, hashDiff.String(), targetDiff.String())
     }
-    log.Printf("✗ Hash mismatch for seed %x and header %x", seedHash[:8], headerHash[:8])
-    return false, nil
+    log.Printf("✗ RandomX share below target for seed %x and header %x", seedHash[:8], headerHash[:8])
+    return false, nil, nil
 }
 
 func reverseBytes(input []byte) []byte {
@@ -143,6 +154,15 @@ func reverseBytes(input []byte) []byte {
         output[i] = input[len(input)-1-i]
     }
     return output
+}
+
+func isZeroBytes(input []byte) bool {
+    for _, b := range input {
+        if b != 0 {
+            return false
+        }
+    }
+    return true
 }
 
 func shortHex(hexStr string, length int) string {
@@ -251,7 +271,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     seedHash := hexToBytes(t.Seed)
     headerHash := hexToBytes(minerHeaderHashHex)
     nonce := hexToBytes(nonceHex)
-    validShare, err := s.verifyRandomXShare(t, seedHash, headerHash, nonce, mixDigest, poolDiff)
+    validShare, verifiedHash, err := s.verifyRandomXShare(t, seedHash, headerHash, nonce, mixDigest, poolDiff)
     if err != nil {
         log.Printf("RandomX share verification error: %v", err)
         return false, false
@@ -260,6 +280,11 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         log.Printf("Share REJECTED locally - Hash Diff: %s, Pool Diff: %s", hashDiff.String(), poolDiff.String())
         return false, false
     }
+
+    verifiedMixDigestHex := "0x" + hex.EncodeToString(verifiedHash)
+    formattedParams[2] = verifiedMixDigestHex
+    verifiedParams := []string{formattedParams[0], formattedParams[1], verifiedMixDigestHex}
+    hashDiff = randomXHashDifficulty(verifiedHash)
 
     // Only submit block candidates to the daemon.  Regular shares have already
     // been verified against the pool difficulty and should be accepted locally.
@@ -282,7 +307,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         go s.fetchRandomXBlockTemplate()
 
         // Record the block in backend
-        exist, err := s.backend.WriteBlock(login, id, params, shareDiff, networkDiff.Int64(), t.Height, s.hashrateExpiration)
+        exist, err := s.backend.WriteBlock(login, id, verifiedParams, shareDiff, networkDiff.Int64(), t.Height, s.hashrateExpiration)
         if exist {
             return true, false
         }
@@ -295,7 +320,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     }
 
     // Regular share - record it
-    exist, err := s.backend.WriteShare(login, id, params, shareDiff, t.Height, s.hashrateExpiration)
+    exist, err := s.backend.WriteShare(login, id, verifiedParams, shareDiff, t.Height, s.hashrateExpiration)
     if exist {
         return true, false
     }
