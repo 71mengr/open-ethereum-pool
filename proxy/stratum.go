@@ -357,19 +357,6 @@ func (cs *Session) handleGetWorkRPC(s *ProxyServer) ([]string, *ErrorReply) {
     seed := strings.TrimPrefix(t.Seed, "0x")
     target := strings.TrimPrefix(t.Target, "0x")
 
-    // If seed is all zeros, use header as seed (temporary fix for RandomX)
-    allZero := true
-    for _, c := range seed {
-        if c != '0' {
-            allZero = false
-            break
-        }
-    }
-    if allZero || len(seed) == 0 {
-        seed = header
-        log.Printf("Seed was zero, using header as seed for %s", cs.ip)
-    }
-
     // Calculate difficulty from target
     // maxUint256 = 2^256 - 1
     maxUint256 := new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
