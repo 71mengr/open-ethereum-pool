@@ -12,8 +12,7 @@ import (
 var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 
 func randomXHashDifficulty(hash []byte) *big.Int {
-    hashLE := reverseBytes(hash)
-    hashBig := new(big.Int).SetBytes(hashLE)
+    hashBig := new(big.Int).SetBytes(hash)
     if hashBig.Sign() == 0 {
         return big.NewInt(0)
     }
@@ -292,31 +291,27 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         ok, err := s.rpc().SubmitBlock(formattedParams)
         if err != nil {
             log.Printf("SubmitBlock error: %v", err)
-            return false, false
+        } else if !ok {
+            log.Printf("Block candidate REJECTED by daemon; accepting as regular share")
+        } else {
+            log.Printf("Block candidate ACCEPTED by daemon")
+            log.Printf("������ BLOCK FOUND and ACCEPTED! ������")
+
+            // Fetch new template
+            go s.fetchRandomXBlockTemplate()
+
+            // Record the block in backend
+            exist, err := s.backend.WriteBlock(login, id, verifiedParams, shareDiff, networkDiff.Int64(), t.Height, s.hashrateExpiration)
+            if exist {
+                return true, false
+            }
+            if err != nil {
+                log.Printf("Failed to write block to backend: %v", err)
+                return false, false
+            }
+
+            return false, true
         }
-
-        if !ok {
-            log.Printf("Block candidate REJECTED by daemon")
-            return false, false
-        }
-
-        log.Printf("Block candidate ACCEPTED by daemon")
-        log.Printf("������ BLOCK FOUND and ACCEPTED! ������")
-
-        // Fetch new template
-        go s.fetchRandomXBlockTemplate()
-
-        // Record the block in backend
-        exist, err := s.backend.WriteBlock(login, id, verifiedParams, shareDiff, networkDiff.Int64(), t.Height, s.hashrateExpiration)
-        if exist {
-            return true, false
-        }
-        if err != nil {
-            log.Printf("Failed to write block to backend: %v", err)
-            return false, false
-        }
-
-        return false, true
     }
 
     // Regular share - record it
