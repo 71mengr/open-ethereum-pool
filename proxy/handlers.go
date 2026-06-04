@@ -66,7 +66,7 @@ func (s *ProxyServer) handleSubmitRPC(cs *Session, login, id string, params []st
         return false, &ErrorReply{Code: -1, Message: "Invalid params"}
     }
 
-    // For RandomX, params are [nonce, seedHash, mixDigest]
+    // For RandomX, params are [nonce, headerHash, mixDigest]
     // All should be valid hex strings (with or without 0x)
     if !noncePattern.MatchString(params[0]) {
         s.policy.ApplyMalformedPolicy(cs.ip)
@@ -74,11 +74,11 @@ func (s *ProxyServer) handleSubmitRPC(cs *Session, login, id string, params []st
         return false, &ErrorReply{Code: -1, Message: "Malformed nonce"}
     }
     
-    // For RandomX, second param is seed hash (should be 32 bytes / 64 hex chars)
+    // For RandomX, second param is the header hash (32 bytes / 64 hex chars)
     if !hashPattern.MatchString(params[1]) {
         s.policy.ApplyMalformedPolicy(cs.ip)
-        log.Printf("Malformed seed hash from %s@%s %v", login, cs.ip, params[1])
-        return false, &ErrorReply{Code: -1, Message: "Malformed seed hash"}
+        log.Printf("Malformed header hash from %s@%s %v", login, cs.ip, params[1])
+        return false, &ErrorReply{Code: -1, Message: "Malformed header hash"}
     }
     
     // Third param is mix digest (32 bytes / 64 hex chars)

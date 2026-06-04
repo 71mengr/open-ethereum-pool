@@ -220,10 +220,10 @@ case "job":
     }
 
     nonce := params[0]
-    secondParam := params[1]  // This is the seed hash the miner used
+    secondParam := params[1]  // This is the header hash the miner used
     mixDigest := params[2]
 
-    log.Printf("eth_submitWork from %s: nonce=%s, seedHash=%s, mix=%s", cs.ip, nonce, secondParam[:16], mixDigest[:16])
+    log.Printf("eth_submitWork from %s: nonce=%s, headerHash=%s, mix=%s", cs.ip, nonce, secondParam[:16], mixDigest[:16])
 
     // Get current block template
     t := s.currentBlockTemplate()
@@ -232,8 +232,7 @@ case "job":
         return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Block template expired"})
     }
 
-    // Use the miner's seed hash for verification (don't replace it)
-    // The miner knows what seed hash it used to calculate the mix digest
+    // Preserve the miner's submitted header hash for share processing.
     params = []string{nonce, secondParam, mixDigest}
 
     exist, validShare := s.processShare(cs.login, "", cs.ip, t, params)

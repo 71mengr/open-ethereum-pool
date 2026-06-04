@@ -159,18 +159,15 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
     log.Printf("GetWork reply[1]: %s", reply[1])
     log.Printf("GetWork reply[2]: %s", reply[2])
 
-    // Based on your logs, the order is SWAPPED:
-    // reply[0] = SEED HASH (what miners are sending)
-    // reply[1] = HEADER HASH (zeros for epoch 0)
-    // reply[2] = TARGET
+    // eth_getWork returns [header hash, seed hash, target].  Keep the header
+    // and seed distinct: miners submit the header as eth_submitWork's second
+    // parameter, while RandomX cache initialization uses the seed.
+    headerHash := reply[0]
+    seedHash := reply[1]
     
-    // So assign correctly:
-    seedHash := reply[0]      // For miners to use
-    headerHash := reply[1]    // For daemon verification
-    
-    log.Printf("Corrected assignments:")
-    log.Printf("  Header Hash (for daemon): %s", headerHash[:16])
-    log.Printf("  Seed Hash (for miners): %s", seedHash[:16])
+    log.Printf("RandomX assignments:")
+    log.Printf("  Header Hash: %s", headerHash[:16])
+    log.Printf("  Seed Hash: %s", seedHash[:16])
 
     // Calculate network difficulty from target
     networkDiff := util.TargetHexToDiff(reply[2])
@@ -181,8 +178,8 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
     }
 
     newTemplate := BlockTemplate{
-        Header:     headerHash,  // Store HEADER HASH here (zeros for epoch 0)
-        Seed:       seedHash,    // Store SEED HASH here (what miners need)
+        Header:     headerHash,
+        Seed:       seedHash,
         Target:     reply[2],
         Height:     height,
         Difficulty: networkDiff,
