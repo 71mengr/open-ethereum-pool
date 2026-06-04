@@ -1,10 +1,20 @@
+// +build cgo,randomx
+
 package proxy
 
+/*
+#cgo CFLAGS: -I${SRCDIR}/../build/_workspace/RandomX/src
+#cgo LDFLAGS: -L${SRCDIR}/../build/_workspace/RandomX/build -lrandomx -lstdc++ -lm
+#include <stdlib.h>
+#include <string.h>
+#include "randomx.h"
+*/
+import "C"
 import (
     "fmt"
+    "log"
     "sync"
-
-    randomx "github.com/sammy007/open-ethereum-pool/randomx"
+    "unsafe"
 )
 
 const (
@@ -14,8 +24,8 @@ const (
 )
 
 type RandomXCache struct {
-    cache *randomx.Cache
-    vm    *randomx.VM
+    cache *C.randomx_cache
+    vm    *C.randomx_vm
     epoch uint64
     mu    sync.RWMutex
 }
@@ -36,65 +46,85 @@ func (m *RandomXManager) GetCache(epoch uint64, seedHash []byte) (*RandomXCache,
     m.mu.RLock()
     cache, exists := m.caches[epoch]
     m.mu.RUnlock()
-    
+
     if exists {
         return cache, nil
     }
-    
+
     m.mu.Lock()
     defer m.mu.Unlock()
-    
-    // Double-check after acquiring write lock
+
     if cache, exists = m.caches[epoch]; exists {
         return cache, nil
     }
-    
-    // Create new cache
-    randomxCache := randomx.NewCache(seedHash)
-    if randomxCache == nil {
-        return nil, fmt.Errorf("failed to create RandomX cache")
+
+    log.Printf("Creating RandomX cache for epoch %d, seed hash: %x", epoch, seedHash[:8])
+
+    // Create cache with default flags (0)
+    cCache := C.randomx_alloc_cache(0)
+    if cCache == nil {
+        return nil, fmt.Errorf("failed to allocate RandomX cache")
     }
-    vm := randomx.NewVM(randomxCache, nil, randomx.FlagFullMem)
-    if vm == nil {
-        randomxCache.Close()
+
+    // Initialize cache with seed hash
+    if len(seedHash) > 0 {
+        C.randomx_init_cache(cCache, unsafe.Pointer(&seedHash[0]), C.size_t(len(seedHash)))
+    }
+
+    // Create VM with default flags (0)
+    cVm := C.randomx_create_vm(0, cCache, nil)
+    if cVm == nil {
+        C.randomx_release_cache(cCache)
         return nil, fmt.Errorf("failed to create RandomX VM")
     }
-    
+
     cache = &RandomXCache{
-        cache: randomxCache,
-        vm:    vm,
+        cache: cCache,
+        vm:    cVm,
         epoch: epoch,
     }
     m.caches[epoch] = cache
-    
-    // Clean old caches
-    if epoch > 2 {
-        if oldCache, ok := m.caches[epoch-2]; ok {
-            oldCache.Close()
-            delete(m.caches, epoch-2)
+
+    log.Printf("RandomX cache created successfully for epoch %d", epoch)
+
+    // Clean old caches (keep last 3 epochs)
+    for e, c := range m.caches {
+        if e+3 < epoch {
+            c.Close()
+            delete(m.caches, e)
         }
     }
-    
+
     return cache, nil
 }
 
 func (c *RandomXCache) ComputeHash(headerHash, nonce []byte) ([]byte, error) {
     c.mu.RLock()
     defer c.mu.RUnlock()
-    
+
     // Input: 32 bytes headerHash + 8 bytes nonce = 40 bytes
     input := make([]byte, 40)
     copy(input[:32], headerHash)
     copy(input[32:], nonce)
-    
+
     output := make([]byte, 32)
-    c.vm.CalculateHash(input, output)
+
+    if len(input) > 0 {
+        C.randomx_calculate_hash(c.vm, unsafe.Pointer(&input[0]), C.size_t(len(input)), unsafe.Pointer(&output[0]))
+    }
+
     return output, nil
 }
 
 func (c *RandomXCache) Close() {
     c.mu.Lock()
     defer c.mu.Unlock()
-    c.vm.Close()
-    c.cache.Close()
+    if c.vm != nil {
+        C.randomx_destroy_vm(c.vm)
+        c.vm = nil
+    }
+    if c.cache != nil {
+        C.randomx_release_cache(c.cache)
+        c.cache = nil
+    }
 }

@@ -11,62 +11,75 @@ import (
 var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 
 // RandomX verification helper
-func (s *ProxyServer) verifyRandomXShare(headerHash, nonce, resultHash []byte, targetDiff *big.Int) (bool, error) {
-        if s.randomxManager == nil {
-                s.randomxManager = NewRandomXManager()
-        }
-        
-        // Get current block height from the block template
-        t := s.currentBlockTemplate()
-        if t == nil {
-                return false, nil
-        }
-        
-        height := t.Height
-        if height == 0 {
-                return false, nil
-        }
-        
-        epoch := height / 2048 // RandomX epoch length
-        
-        // Get seed hash for this epoch
-        seedHash, err := s.getRandomXSeedHash(height)
-        if err != nil {
-                log.Printf("Failed to get RandomX seed hash: %v", err)
-                return false, err
-        }
-        
-        cache, err := s.randomxManager.GetCache(epoch, hexToBytes(seedHash))
-        if err != nil {
-                log.Printf("Failed to get RandomX cache: %v", err)
-                return false, err
-        }
-        
-        // Compute expected hash
-        expectedHash, err := cache.ComputeHash(headerHash, nonce)
-        if err != nil {
-                return false, err
-        }
-        
-        // Compare with miner's result
-        if !bytes.Equal(expectedHash, resultHash) {
-                return false, nil
-        }
-        
-        // Check difficulty target
-        hashBig := new(big.Int).SetBytes(expectedHash)
-        hashDiff := new(big.Int).Div(maxUint256, hashBig)
-        
-        return hashDiff.Cmp(targetDiff) >= 0, nil
+// RandomX verification
+func (s *ProxyServer) verifyRandomXShare(headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
+    if s.randomxManager == nil {
+        s.randomxManager = NewRandomXManager()
+    }
+
+    // Get current block height from the block template
+    t := s.currentBlockTemplate()
+    if t == nil {
+        return false, nil
+    }
+
+    height := t.Height
+    if height == 0 {
+        return false, nil
+    }
+
+    epoch := height / 2048
+
+    // Get seed hash for this epoch
+    seedHash, err := s.getRandomXSeedHash(height)
+    if err != nil {
+        log.Printf("Failed to get RandomX seed hash: %v", err)
+        return false, err
+    }
+
+    cache, err := s.randomxManager.GetCache(epoch, seedHash)
+    if err != nil {
+        log.Printf("Failed to get RandomX cache: %v", err)
+        return false, err
+    }
+
+    // Compute expected hash from headerHash + nonce
+    // For RandomX, you need to combine headerHash and nonce properly
+    expectedHash, err := cache.ComputeHash(headerHash, nonce)
+    if err != nil {
+        return false, err
+    }
+
+log.Printf("Computed RandomX hash: %x", expectedHash)
+log.Printf("Miner's mixDigest: %x", mixDigest)
+
+    // For Ethereum Classic, compare expectedHash with mixDigest
+    if !bytes.Equal(expectedHash, mixDigest) {
+        log.Printf("Hash mismatch: expected=%x, got=%x", expectedHash, mixDigest)
+        return false, nil
+    }
+
+    // Check difficulty target
+    hashBig := new(big.Int).SetBytes(expectedHash)
+    hashDiff := new(big.Int).Div(maxUint256, hashBig)
+
+    return hashDiff.Cmp(targetDiff) >= 0, nil
 }
 
-// Helper to convert hex string to bytes
 func hexToBytes(hexStr string) []byte {
-        if len(hexStr) >= 2 && hexStr[:2] == "0x" {
-                hexStr = hexStr[2:]
-        }
-        bytes, _ := hex.DecodeString(hexStr)
-        return bytes
+    if len(hexStr) >= 2 && hexStr[:2] == "0x" {
+        hexStr = hexStr[2:]
+    }
+    // Ensure even length
+    if len(hexStr)%2 != 0 {
+        hexStr = "0" + hexStr
+    }
+    bytes, err := hex.DecodeString(hexStr)
+    if err != nil {
+        log.Printf("Failed to decode hex string '%s': %v", hexStr, err)
+        return nil
+    }
+    return bytes
 }
 
 func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, params []string) (bool, bool) {
@@ -79,6 +92,8 @@ func (s *ProxyServer) processShare(login, id, ip string, t *BlockTemplate, param
 
 // New RandomX share processing
 func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate, params []string) (bool, bool) {
+        log.Printf("RandomX share params from %v: %+v", login, params)
+
         // RandomX params: [nonce, headerHash, resultHash]
         if len(params) < 3 {
                 log.Printf("Invalid RandomX share params from %v@%v: %v", login, ip, params)
@@ -88,7 +103,8 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         nonceHex := params[0]
         headerHashHex := params[1]
         resultHashHex := params[2]
-        
+                log.Printf("nonce=%s, headerHash=%s, resultHash=%s", nonceHex, headerHashHex, resultHashHex)
+
         nonce := hexToBytes(nonceHex)
         headerHash := hexToBytes(headerHashHex)
         resultHash := hexToBytes(resultHashHex)

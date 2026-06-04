@@ -1,6 +1,8 @@
 package proxy
 
 import (
+        "encoding/hex"
+        "fmt"
 	"log"
 	"math/big"
 	"strconv"
@@ -116,53 +118,65 @@ func (s *ProxyServer) fetchPendingBlock() (*rpc.GetBlockReplyPart, uint64, int64
 	return reply, blockNumber, blockDiff, nil
 }
 
-func (s *ProxyServer) getRandomXSeedHash(height uint64) (string, error) {
-    var seedHash string
-    err := s.rpc().Call(&seedHash, "randomx_getSeedHash", height)
-    return seedHash, err
+func (s *ProxyServer) getRandomXSeedHash(height uint64) ([]byte, error) {
+    // Convert height to hex string with 0x prefix
+    heightHex := fmt.Sprintf("0x%x", height)
+    
+    var seedHashHex string
+    err := s.rpc().Call(&seedHashHex, "randomx_getSeedHash", heightHex)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Remove 0x prefix if present
+    seedHashHex = strings.TrimPrefix(seedHashHex, "0x")
+    return hex.DecodeString(seedHashHex)
 }
 
 func (s *ProxyServer) fetchRandomXBlockTemplate() {
     rpc := s.rpc()
     t := s.currentBlockTemplate()
-    
+
     reply, err := rpc.GetWork()
     if err != nil {
         log.Printf("Error while refreshing RandomX block template on %s: %s", rpc.Name, err)
         return
     }
-    
+
     // Get current height for epoch calculation
     height := s.getCurrentHeight()
     if height == 0 {
         return
     }
-    
-    seedHash, err := s.getRandomXSeedHash(height)
+
+    seedHashBytes, err := s.getRandomXSeedHash(height)
     if err != nil {
         log.Printf("Error getting RandomX seed hash: %v", err)
         return
     }
     
+    // Convert seed hash bytes to hex string with 0x prefix
+    seedHashStr := "0x" + hex.EncodeToString(seedHashBytes)
+
     // No need to update, we have fresh job
     if t != nil && t.Header == reply[0] {
         return
     }
-    
+
     newTemplate := BlockTemplate{
         Header:     reply[0],
-        Seed:       seedHash,
+        Seed:       seedHashStr,  // Now this is a string
         Target:     reply[2],
         Height:     height,
         Difficulty: util.TargetHexToDiff(reply[2]),
         headers:    make(map[string]heightDiffPair),
     }
-    
+
     newTemplate.headers[reply[0]] = heightDiffPair{
         diff:   newTemplate.Difficulty,
         height: height,
     }
-    
+
     if t != nil {
         for k, v := range t.headers {
             if v.height > height-maxBacklog {
@@ -170,10 +184,10 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
             }
         }
     }
-    
+
     s.blockTemplate.Store(&newTemplate)
     log.Printf("New RandomX block to mine on %s at height %d / %s", rpc.Name, height, reply[0][0:10])
-    
+
     if s.config.Proxy.Stratum.Enabled {
         go s.broadcastNewJobs()
     }
