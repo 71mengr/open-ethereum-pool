@@ -19,6 +19,14 @@ func randomXHashDifficulty(hash []byte) *big.Int {
     return new(big.Int).Div(maxUint256, hashBig)
 }
 
+func randomXHashMeetsTarget(hash []byte, targetHex string) bool {
+    target := hexToBytes(targetHex)
+    if len(hash) == 0 || len(target) == 0 {
+        return false
+    }
+    return new(big.Int).SetBytes(hash).Cmp(new(big.Int).SetBytes(target)) <= 0
+}
+
 // targetHexToDiff converts a target hex string to difficulty big.Int
 func targetHexToDiff(targetHex string) *big.Int {
     // Remove 0x prefix if present
@@ -48,7 +56,7 @@ func targetHexToDiff(targetHex string) *big.Int {
 }
 
 // RandomX verification helper - uses the template seed for the cache and the header hash as input
-func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash, nonce, submittedMixDigest []byte, targetDiff *big.Int) (bool, []byte, error) {
+func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash, nonce, submittedMixDigest []byte, targetDiff *big.Int) (bool, []byte, []byte, error) {
     // Protect manager initialization
     s.randomxMu.Lock()
     if s.randomxManager == nil {
@@ -58,12 +66,12 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
     s.randomxMu.Unlock()
 
     if t == nil {
-        return false, nil, nil
+        return false, nil, nil, nil
     }
 
     height := t.Height
     if height == 0 {
-        return false, nil, nil
+        return false, nil, nil, nil
     }
 
     epochLength := s.config.Proxy.RandomX.EpochLength
@@ -78,11 +86,11 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
     // verification to reject otherwise valid shares with a hash mismatch.
     if len(seedHash) != 32 {
         log.Printf("Invalid seed hash length: %d", len(seedHash))
-        return false, nil, nil
+        return false, nil, nil, nil
     }
     if len(headerHash) != 32 {
         log.Printf("Invalid header hash length: %d", len(headerHash))
-        return false, nil, nil
+        return false, nil, nil, nil
     }
 
     log.Printf("Getting RandomX cache - Height: %d, Epoch: %d, Seed: %x, Header: %x", height, epoch, seedHash[:8], headerHash[:8])
@@ -90,16 +98,16 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
     cache, err := manager.GetCache(epoch, seedHash)
     if err != nil {
         log.Printf("Failed to get RandomX cache: %v", err)
-        return false, nil, err
+        return false, nil, nil, err
     }
 
     if len(nonce) == 0 || len(nonce) > 8 {
         log.Printf("Invalid nonce length: %d", len(nonce))
-        return false, nil, nil
+        return false, nil, nil, nil
     }
     if len(submittedMixDigest) != 32 {
         log.Printf("Invalid mix digest length: %d", len(submittedMixDigest))
-        return false, nil, nil
+        return false, nil, nil, nil
     }
 
     // Pad nonce to 8 bytes
@@ -125,7 +133,7 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
         expectedHash, err := cache.ComputeHash(headerHash, candidate.bytes)
         if err != nil {
             log.Printf("ComputeHash error with %s nonce: %v", candidate.name, err)
-            return false, nil, err
+            return false, nil, nil, err
         }
 
         if !bytes.Equal(expectedHash, submittedMixDigest) {
@@ -144,14 +152,14 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
         if hashDiff.Cmp(targetDiff) >= 0 {
             log.Printf("✓ Share verified - %s nonce, Hash difficulty: %s, Target: %s",
                 candidate.name, hashDiff.String(), targetDiff.String())
-            return true, expectedHash, nil
+            return true, expectedHash, candidate.bytes, nil
         }
 
         log.Printf("RandomX hash below target with %s nonce - Hash difficulty: %s, Target: %s",
             candidate.name, hashDiff.String(), targetDiff.String())
     }
     log.Printf("✗ RandomX share below target for seed %x and header %x", seedHash[:8], headerHash[:8])
-    return false, bestHash, nil
+    return false, bestHash, nil, nil
 }
 
 func reverseBytes(input []byte) []byte {
@@ -160,6 +168,16 @@ func reverseBytes(input []byte) []byte {
         output[i] = input[len(input)-1-i]
     }
     return output
+}
+
+func nonceBytesToHex(nonce []byte) string {
+    paddedNonce := make([]byte, 8)
+    if len(nonce) >= 8 {
+        copy(paddedNonce, nonce[len(nonce)-8:])
+    } else {
+        copy(paddedNonce[8-len(nonce):], nonce)
+    }
+    return "0x" + hex.EncodeToString(paddedNonce)
 }
 
 func isZeroBytes(input []byte) bool {
@@ -275,7 +293,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     seedHash := hexToBytes(t.Seed)
     headerHash := hexToBytes(minerHeaderHashHex)
     nonce := hexToBytes(nonceHex)
-    validShare, verifiedHash, err := s.verifyRandomXShare(t, seedHash, headerHash, nonce, mixDigest, poolDiff)
+    validShare, verifiedHash, verifiedNonce, err := s.verifyRandomXShare(t, seedHash, headerHash, nonce, mixDigest, poolDiff)
     if err != nil {
         log.Printf("RandomX share verification error: %v", err)
         return false, false
@@ -288,15 +306,21 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         return false, false
     }
 
+    verifiedNonceHex := nonceBytesToHex(verifiedNonce)
     verifiedMixDigestHex := "0x" + hex.EncodeToString(verifiedHash)
+    formattedParams[0] = verifiedNonceHex
     formattedParams[2] = verifiedMixDigestHex
-    verifiedParams := []string{formattedParams[0], formattedParams[1], verifiedMixDigestHex}
+    verifiedParams := []string{verifiedNonceHex, formattedParams[1], verifiedMixDigestHex}
     hashDiff = randomXHashDifficulty(verifiedHash)
     log.Printf("Share - Hash Diff: %s, Pool Diff: %s, Network Diff: %s", hashDiff.String(), poolDiff.String(), networkDiff.String())
 
     // Only submit block candidates to the daemon.  Regular shares have already
     // been verified against the pool difficulty and should be accepted locally.
-    if networkDiff.Sign() > 0 && hashDiff.Cmp(networkDiff) >= 0 {
+    blockCandidate := randomXHashMeetsTarget(verifiedHash, t.Target)
+    if !blockCandidate && networkDiff.Sign() > 0 {
+        blockCandidate = hashDiff.Cmp(networkDiff) >= 0
+    }
+    if blockCandidate {
         ok, err := s.rpc().SubmitBlock(formattedParams)
         if err != nil {
             log.Printf("SubmitBlock error: %v", err)

@@ -34,3 +34,28 @@ func TestGetPoolShareDifficultyUsesProxyDifficultyForEthash(t *testing.T) {
 		t.Fatalf("expected proxy difficulty %d, got %d", server.config.Proxy.Difficulty, got)
 	}
 }
+
+func TestNonceBytesToHexPadsToEightBytes(t *testing.T) {
+	got := nonceBytesToHex([]byte{0x12, 0x34})
+	want := "0x0000000000001234"
+	if got != want {
+		t.Fatalf("expected padded nonce %s, got %s", want, got)
+	}
+}
+
+func TestNonceBytesToHexKeepsLastEightBytes(t *testing.T) {
+	got := nonceBytesToHex([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09})
+	want := "0x0203040506070809"
+	if got != want {
+		t.Fatalf("expected truncated nonce %s, got %s", want, got)
+	}
+}
+
+func TestRandomXHashMeetsTargetUsesExactTarget(t *testing.T) {
+	if !randomXHashMeetsTarget([]byte{0x0f}, "0x10") {
+		t.Fatalf("expected hash below target to be a block candidate")
+	}
+	if randomXHashMeetsTarget([]byte{0x11}, "0x10") {
+		t.Fatalf("expected hash above target not to be a block candidate")
+	}
+}
