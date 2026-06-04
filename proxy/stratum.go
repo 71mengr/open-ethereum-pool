@@ -240,22 +240,23 @@ case "eth_submitWork":
                 log.Printf("Header mismatch from %s: expected %s, got %s", cs.ip, t.Header, headerHash)
                 return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid header hash"})
         }
-        
+
         // Process the share
         params = []string{nonce, headerHash, mixDigest}
-        valid, accepted := s.processShare(cs.login, "", cs.ip, t, params)
-        
-        if !valid {
+        exist, validShare := s.processShare(cs.login, "", cs.ip, t, params)
+
+        if exist {
+                log.Printf("Duplicate eth_submitWork share from %s", cs.ip)
+                return cs.sendTCPError(req.Id, &ErrorReply{Code: 22, Message: "Duplicate share"})
+        }
+
+        if !validShare {
                 log.Printf("Invalid eth_submitWork share from %s", cs.ip)
                 return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid share"})
         }
-        
-        if accepted {
-                log.Printf("Block found by %s!", cs.ip)
-        } else {
-                log.Printf("Share accepted from %s", cs.ip)
-        }
-        
+
+        log.Printf("Share accepted from %s", cs.ip)
+
         return cs.sendTCPResult(req.Id, true)
 
         case "eth_submitHashrate":

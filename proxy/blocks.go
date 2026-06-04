@@ -149,14 +149,9 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
         return
     }
 
-    seedHashBytes, err := s.getRandomXSeedHash(height)
-    if err != nil {
-        log.Printf("Error getting RandomX seed hash: %v", err)
-        return
-    }
-    
-    // Convert seed hash bytes to hex string with 0x prefix
-    seedHashStr := "0x" + hex.EncodeToString(seedHashBytes)
+    // Use the seed hash returned by eth_getWork so miners and verification use
+    // the same daemon-provided work parameters.
+    seedHashStr := reply[1]
 
     // No need to update, we have fresh job
     if t != nil && t.Header == reply[0] {

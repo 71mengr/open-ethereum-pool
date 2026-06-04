@@ -12,13 +12,11 @@ var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 
 // RandomX verification helper
 // RandomX verification
-func (s *ProxyServer) verifyRandomXShare(headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
+func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
     if s.randomxManager == nil {
         s.randomxManager = NewRandomXManager()
     }
 
-    // Get current block height from the block template
-    t := s.currentBlockTemplate()
     if t == nil {
         return false, nil
     }
@@ -30,12 +28,8 @@ func (s *ProxyServer) verifyRandomXShare(headerHash, nonce, mixDigest []byte, ta
 
     epoch := height / 2048
 
-    // Get seed hash for this epoch
-    seedHash, err := s.getRandomXSeedHash(height)
-    if err != nil {
-        log.Printf("Failed to get RandomX seed hash: %v", err)
-        return false, err
-    }
+    // Use the seed hash returned by the daemon with this work template.
+    seedHash := hexToBytes(t.Seed)
 
     cache, err := s.randomxManager.GetCache(epoch, seedHash)
     if err != nil {
@@ -99,21 +93,33 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
                 log.Printf("Invalid RandomX share params from %v@%v: %v", login, ip, params)
                 return false, false
         }
+
+        if t == nil {
+                log.Printf("No block template for RandomX share from %v@%v", login, ip)
+                return false, false
+        }
         
         nonceHex := params[0]
         headerHashHex := params[1]
         resultHashHex := params[2]
                 log.Printf("nonce=%s, headerHash=%s, resultHash=%s", nonceHex, headerHashHex, resultHashHex)
 
+        hashNoNonce := headerHashHex
+        h, ok := t.headers[hashNoNonce]
+        if !ok {
+                log.Printf("Stale share from %v@%v", login, ip)
+                return false, false
+        }
+
         nonce := hexToBytes(nonceHex)
-        headerHash := hexToBytes(headerHashHex)
+        headerHash := hexToBytes(hashNoNonce)
         resultHash := hexToBytes(resultHashHex)
         
         shareDiff := s.config.Proxy.Difficulty
         targetDiff := big.NewInt(shareDiff)
         
-        // Verify the share using RandomX
-        valid, err := s.verifyRandomXShare(headerHash, nonce, resultHash, targetDiff)
+        // Verify the share using RandomX and the daemon-provided work.
+        valid, err := s.verifyRandomXShare(t, headerHash, nonce, resultHash, targetDiff)
         if err != nil {
                 log.Printf("RandomX verification error for %v@%v: %v", login, ip, err)
                 return false, false
@@ -121,14 +127,6 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         
         if !valid {
                 log.Printf("Invalid RandomX share from %v@%v", login, ip)
-                return false, false
-        }
-        
-        // Get the header hash as string for lookup
-        hashNoNonce := headerHashHex
-        h, ok := t.headers[hashNoNonce]
-        if !ok {
-                log.Printf("Stale share from %v@%v", login, ip)
                 return false, false
         }
         
