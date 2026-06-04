@@ -268,7 +268,7 @@ func (t *BlockTemplate) GetNetworkTarget() *big.Int {
 // XMRig hashrates.
 const DefaultRandomXShareDifficulty int64 = 1000
 
-// GetPoolShareDifficulty returns the pool's share difficulty from config.
+// GetPoolShareDifficulty returns the pool share difficulty advertised to miners.
 func (s *ProxyServer) GetPoolShareDifficulty() int64 {
     if s.config.Proxy.RandomX.Enabled {
         if s.config.Proxy.RandomX.ShareDifficulty > 0 {
@@ -277,4 +277,15 @@ func (s *ProxyServer) GetPoolShareDifficulty() int64 {
         return DefaultRandomXShareDifficulty
     }
     return s.config.Proxy.Difficulty
+}
+
+// GetPoolShareTarget returns the target that must be sent to miners for shares.
+//
+// The stratum target must be derived from GetPoolShareDifficulty, not the
+// legacy proxy difficulty.  Otherwise RandomX miners receive a much harder
+// target than the pool accepts locally, submit shares too rarely, and the API
+// under-reports the miner hashrate because hashrate is calculated from accepted
+// share difficulty over time.
+func (s *ProxyServer) GetPoolShareTarget() string {
+    return util.GetTargetHex(s.GetPoolShareDifficulty())
 }

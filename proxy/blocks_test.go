@@ -3,7 +3,7 @@ package proxy
 import "testing"
 
 func TestGetPoolShareDifficultyUsesRandomXDefault(t *testing.T) {
-	server := &ProxyServer{}
+	server := &ProxyServer{config: &Config{}}
 	server.config.Proxy.Difficulty = 2000000000
 	server.config.Proxy.RandomX.Enabled = true
 
@@ -14,7 +14,7 @@ func TestGetPoolShareDifficultyUsesRandomXDefault(t *testing.T) {
 }
 
 func TestGetPoolShareDifficultyUsesConfiguredRandomXShareDifficulty(t *testing.T) {
-	server := &ProxyServer{}
+	server := &ProxyServer{config: &Config{}}
 	server.config.Proxy.Difficulty = 2000000000
 	server.config.Proxy.RandomX.Enabled = true
 	server.config.Proxy.RandomX.ShareDifficulty = 5000
@@ -26,12 +26,35 @@ func TestGetPoolShareDifficultyUsesConfiguredRandomXShareDifficulty(t *testing.T
 }
 
 func TestGetPoolShareDifficultyUsesProxyDifficultyForEthash(t *testing.T) {
-	server := &ProxyServer{}
+	server := &ProxyServer{config: &Config{}}
 	server.config.Proxy.Difficulty = 2000000000
 
 	got := server.GetPoolShareDifficulty()
 	if got != server.config.Proxy.Difficulty {
 		t.Fatalf("expected proxy difficulty %d, got %d", server.config.Proxy.Difficulty, got)
+	}
+}
+
+func TestGetPoolShareTargetUsesRandomXShareDifficulty(t *testing.T) {
+	server := &ProxyServer{config: &Config{}}
+	server.config.Proxy.Difficulty = 2000000000
+	server.config.Proxy.RandomX.Enabled = true
+	server.config.Proxy.RandomX.ShareDifficulty = 5000
+
+	got := targetHexToDiff(server.GetPoolShareTarget()).Int64()
+	if got != 5000 {
+		t.Fatalf("expected RandomX stratum target difficulty 5000, got %d", got)
+	}
+}
+
+func TestGetPoolShareTargetDoesNotUseLegacyDifficultyForRandomX(t *testing.T) {
+	server := &ProxyServer{config: &Config{}}
+	server.config.Proxy.Difficulty = 2000000000
+	server.config.Proxy.RandomX.Enabled = true
+
+	got := targetHexToDiff(server.GetPoolShareTarget()).Int64()
+	if got != DefaultRandomXShareDifficulty {
+		t.Fatalf("expected default RandomX stratum target difficulty %d, got %d", DefaultRandomXShareDifficulty, got)
 	}
 }
 
