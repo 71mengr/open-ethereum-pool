@@ -56,7 +56,7 @@ func NewProxy(cfg *Config, backend *storage.RedisClient) *ProxyServer {
         policy := policy.Start(&cfg.Proxy.Policy, backend)
 
         proxy := &ProxyServer{config: cfg, backend: backend, policy: policy}
-        proxy.diff = proxy.GetPoolShareTarget()
+        proxy.updateShareTarget()
 
         // Initialize RandomX manager if enabled
         if cfg.Proxy.RandomX.Enabled {

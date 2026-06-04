@@ -129,7 +129,7 @@ case "login":
         // Remove 0x prefix from all hex fields
         header := strings.TrimPrefix(t.Header, "0x")
         seedHash := strings.TrimPrefix(t.Seed, "0x")
-        target := formatTarget(s.diff)
+        target := randomXStratumTarget(s.GetPoolShareDifficulty())
 
         job := map[string]interface{}{
                 "blob":      header,
@@ -161,7 +161,7 @@ case "job":
     // Remove 0x prefix for XMRig
     header := strings.TrimPrefix(t.Header, "0x")
     seedHash := strings.TrimPrefix(t.Seed, "0x")
-    target := formatTarget(s.diff)
+    target := randomXStratumTarget(s.GetPoolShareDifficulty())
 
     // Force epoch 0 seed hash for heights < 2048
     var finalSeedHash string
@@ -176,7 +176,7 @@ case "job":
     job := map[string]interface{}{
         "blob":      header,           // The block header hash (without nonce)
         "job_id":    "1",              // Job ID
-        "target":    target,           // Pool target (64-char hex WITHOUT 0x)
+        "target":    target,           // Pool target (compact little-endian hex WITHOUT 0x)
         "seed_hash": finalSeedHash,    // CRITICAL: Must match what XMRig expects
         "height":    t.Height,         // Current block height
     }
@@ -314,7 +314,7 @@ func (s *ProxyServer) broadcastNewJobs() {
     // Remove 0x prefix for miners
     header := strings.TrimPrefix(t.Header, "0x")  // This is the actual header hash
     seed := strings.TrimPrefix(t.Seed, "0x")      // This is the seed hash for RandomX
-    target := formatTarget(s.diff)
+    target := randomXStratumTarget(s.GetPoolShareDifficulty())
     
     reply := []string{header, seed, target}
 

@@ -10,13 +10,43 @@ import (
 )
 
 var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
+var maxUint32 = new(big.Int).SetUint64(^uint64(0) >> 32)
 
 func randomXHashDifficulty(hash []byte) *big.Int {
-    hashBig := new(big.Int).SetBytes(hash)
+    if len(hash) == 0 {
+        return big.NewInt(0)
+    }
+
+    // RandomX/CryptoNote hashes are compared as little-endian integers for
+    // share difficulty. Treating the digest as a big-endian integer makes many
+    // valid high-difficulty shares look like difficulty 1-10 and causes local
+    // rejection when the configured pool difficulty is raised.
+    hashBig := new(big.Int).SetBytes(reverseBytes(hash))
     if hashBig.Sign() == 0 {
         return big.NewInt(0)
     }
     return new(big.Int).Div(maxUint256, hashBig)
+}
+
+func randomXStratumTarget(diff int64) string {
+    if diff <= 0 {
+        diff = DefaultRandomXShareDifficulty
+    }
+
+    target := new(big.Int).Div(maxUint32, big.NewInt(diff))
+    if target.Sign() > 0 {
+        targetBytes := target.FillBytes(make([]byte, 4))
+        return hex.EncodeToString(reverseBytes(targetBytes))
+    }
+
+    // Extremely high configured difficulties do not fit XMRig's compact
+    // 4-byte target. Fall back to its supported 8-byte little-endian form.
+    target = new(big.Int).Div(new(big.Int).SetUint64(^uint64(0)), big.NewInt(diff))
+    if target.Sign() == 0 {
+        target.SetInt64(1)
+    }
+    targetBytes := target.FillBytes(make([]byte, 8))
+    return hex.EncodeToString(reverseBytes(targetBytes))
 }
 
 func randomXHashMeetsTarget(hash []byte, targetHex string) bool {

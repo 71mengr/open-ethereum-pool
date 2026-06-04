@@ -289,3 +289,7 @@ func (s *ProxyServer) GetPoolShareDifficulty() int64 {
 func (s *ProxyServer) GetPoolShareTarget() string {
     return util.GetTargetHex(s.GetPoolShareDifficulty())
 }
+
+func (s *ProxyServer) updateShareTarget() {
+    s.diff = util.GetTargetHex(s.GetPoolShareDifficulty())
+}
