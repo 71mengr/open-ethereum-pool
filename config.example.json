@@ -29,7 +29,8 @@
             "epochLength": 2048,
             "cacheSizeMB": 256,
             "datasetSizeGB": 2,
-            "minMemoryGB": 4
+            "minMemoryGB": 4,
+            "shareDifficulty": 1000
         },
 
         "policy": {

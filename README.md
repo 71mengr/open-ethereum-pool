@@ -149,6 +149,16 @@ otherwise you will get errors on start because of JSON comments.**
     // TTL for workers stats, usually should be equal to large hashrate window from API section
     "hashrateExpiration": "3h",
 
+    "randomx": {
+      "enabled": true,
+      "epochLength": 2048,
+      "cacheSizeMB": 256,
+      "datasetSizeGB": 2,
+      "minMemoryGB": 4,
+      // Low CPU-miner share difficulty keeps XMRig workers submitting shares often enough for pool hashrate stats.
+      "shareDifficulty": 1000
+    },
+
     "policy": {
       "workers": 8,
       "resetInterval": "60m",

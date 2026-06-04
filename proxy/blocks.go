@@ -262,10 +262,19 @@ func (t *BlockTemplate) GetNetworkTarget() *big.Int {
     return big.NewInt(0)
 }
 
-// GetPoolShareDifficulty returns the pool's share difficulty from config
+// DefaultRandomXShareDifficulty is a low fixed difficulty suitable for CPU
+// miners.  Falling back to the legacy Ethash difficulty makes RandomX miners
+// submit shares so rarely that the pool hashrate stays at 0.00 H for normal
+// XMRig hashrates.
+const DefaultRandomXShareDifficulty int64 = 1000
+
+// GetPoolShareDifficulty returns the pool's share difficulty from config.
 func (s *ProxyServer) GetPoolShareDifficulty() int64 {
-    if s.config.Proxy.RandomX.Enabled && s.config.Proxy.RandomX.ShareDifficulty > 0 {
-        return s.config.Proxy.RandomX.ShareDifficulty
+    if s.config.Proxy.RandomX.Enabled {
+        if s.config.Proxy.RandomX.ShareDifficulty > 0 {
+            return s.config.Proxy.RandomX.ShareDifficulty
+        }
+        return DefaultRandomXShareDifficulty
     }
     return s.config.Proxy.Difficulty
 }
