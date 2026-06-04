@@ -219,53 +219,78 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     log.Printf("  headerHash=%s...", formattedParams[1][:16])
     log.Printf("  mixDigest=%s...", formattedParams[2][:16])
 
-    // Calculate share difficulty for logging
+    // Calculate share difficulty for logging and local pool validation.
     mixDigest := hexToBytes(mixDigestHex)
     hashDiff := randomXHashDifficulty(mixDigest)
-    
+    shareDiff := s.GetPoolShareDifficulty()
+    poolDiff := big.NewInt(shareDiff)
+
     var networkDiff *big.Int
     if t.Difficulty != nil && t.Difficulty.Sign() > 0 {
         networkDiff = t.Difficulty
     } else {
         networkDiff = big.NewInt(0)
     }
-    
-    log.Printf("Share - Hash Diff: %s, Network Diff: %s", hashDiff.String(), networkDiff.String())
 
-    // Submit to daemon for verification
-    ok, err := s.rpc().SubmitBlock(formattedParams)
+    log.Printf("Share - Hash Diff: %s, Pool Diff: %s, Network Diff: %s", hashDiff.String(), poolDiff.String(), networkDiff.String())
+
+    // eth_submitWork only accepts full block candidates.  Validate normal pool
+    // shares locally so valid shares below network difficulty are not rejected
+    // by the daemon, as shown by Hash Diff < Network Diff in the logs.
+    seedHash := hexToBytes(minerSeedHashHex)
+    nonce := hexToBytes(nonceHex)
+    validShare, err := s.verifyRandomXShare(t, seedHash, nonce, mixDigest, poolDiff)
     if err != nil {
-        log.Printf("SubmitBlock error: %v", err)
+        log.Printf("RandomX share verification error: %v", err)
         return false, false
     }
-    
-    if !ok {
-        log.Printf("Share REJECTED by daemon")
+    if !validShare {
+        log.Printf("Share REJECTED locally - Hash Diff: %s, Pool Diff: %s", hashDiff.String(), poolDiff.String())
         return false, false
     }
-    
-    log.Printf("Share ACCEPTED by daemon")
-    
-    // Check if this was a block (difficulty >= network)
+
+    // Only submit block candidates to the daemon.  Regular shares have already
+    // been verified against the pool difficulty and should be accepted locally.
     if networkDiff.Sign() > 0 && hashDiff.Cmp(networkDiff) >= 0 {
+        ok, err := s.rpc().SubmitBlock(formattedParams)
+        if err != nil {
+            log.Printf("SubmitBlock error: %v", err)
+            return false, false
+        }
+
+        if !ok {
+            log.Printf("Block candidate REJECTED by daemon")
+            return false, false
+        }
+
+        log.Printf("Block candidate ACCEPTED by daemon")
         log.Printf("������ BLOCK FOUND and ACCEPTED! ������")
-        
+
         // Fetch new template
         go s.fetchRandomXBlockTemplate()
-        
+
         // Record the block in backend
-        exist, err := s.backend.WriteBlock(login, id, params, 1, networkDiff.Int64(), t.Height, s.hashrateExpiration)
+        exist, err := s.backend.WriteBlock(login, id, params, shareDiff, networkDiff.Int64(), t.Height, s.hashrateExpiration)
         if exist {
             return true, false
         }
         if err != nil {
             log.Printf("Failed to write block to backend: %v", err)
+            return false, false
         }
-        
+
+        return false, true
+    }
+
+    // Regular share - record it
+    exist, err := s.backend.WriteShare(login, id, params, shareDiff, t.Height, s.hashrateExpiration)
+    if exist {
         return true, false
     }
-    
-    // Regular share - record it
-    s.backend.WriteShare(login, id, params, 1, t.Height, s.hashrateExpiration)
+    if err != nil {
+        log.Printf("Failed to write share to backend: %v", err)
+        return false, false
+    }
+    log.Printf("Share ACCEPTED locally")
     return false, true
 }
