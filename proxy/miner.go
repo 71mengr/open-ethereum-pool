@@ -11,7 +11,6 @@ import (
 var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 
 // RandomX verification helper
-// RandomX verification
 func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
     if s.randomxManager == nil {
         s.randomxManager = NewRandomXManager()
@@ -37,27 +36,56 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, headerHash, nonce, mi
         return false, err
     }
 
-    // Compute expected hash from headerHash + nonce
-    // For RandomX, you need to combine headerHash and nonce properly
-    expectedHash, err := cache.ComputeHash(headerHash, nonce)
-    if err != nil {
-        return false, err
+    // Miners submit the eth_submitWork nonce in network/big-endian hex, but
+    // RandomX mining software commonly embeds the nonce bytes in little-endian
+    // order before hashing the work blob. Try both forms so valid shares are
+    // not rejected with a local hash mismatch.
+    nonceCandidates := []struct {
+        name  string
+        bytes []byte
+    }{
+        {"submitted", nonce},
+    }
+    if len(nonce) > 1 {
+        nonceCandidates = append(nonceCandidates, struct {
+            name  string
+            bytes []byte
+        }{"little-endian", reverseBytes(nonce)})
     }
 
-log.Printf("Computed RandomX hash: %x", expectedHash)
-log.Printf("Miner's mixDigest: %x", mixDigest)
+    var expectedHash []byte
+    for _, candidate := range nonceCandidates {
+        expectedHash, err = cache.ComputeHash(headerHash, candidate.bytes)
+        if err != nil {
+            return false, err
+        }
 
-    // For Ethereum Classic, compare expectedHash with mixDigest
-    if !bytes.Equal(expectedHash, mixDigest) {
-        log.Printf("Hash mismatch: expected=%x, got=%x", expectedHash, mixDigest)
-        return false, nil
+        log.Printf("Computed RandomX hash (%s nonce): %x", candidate.name, expectedHash)
+        if bytes.Equal(expectedHash, mixDigest) {
+            if candidate.name != "submitted" {
+                log.Printf("RandomX share matched using %s nonce bytes", candidate.name)
+            }
+            hashBig := new(big.Int).SetBytes(expectedHash)
+            if hashBig.Sign() == 0 {
+                return false, nil
+            }
+            hashDiff := new(big.Int).Div(maxUint256, hashBig)
+
+            return hashDiff.Cmp(targetDiff) >= 0, nil
+        }
     }
 
-    // Check difficulty target
-    hashBig := new(big.Int).SetBytes(expectedHash)
-    hashDiff := new(big.Int).Div(maxUint256, hashBig)
+    log.Printf("Miner's mixDigest: %x", mixDigest)
+    log.Printf("Hash mismatch: expected=%x, got=%x", expectedHash, mixDigest)
+    return false, nil
+}
 
-    return hashDiff.Cmp(targetDiff) >= 0, nil
+func reverseBytes(input []byte) []byte {
+    output := make([]byte, len(input))
+    for i := range input {
+        output[i] = input[len(input)-1-i]
+    }
+    return output
 }
 
 func hexToBytes(hexStr string) []byte {
