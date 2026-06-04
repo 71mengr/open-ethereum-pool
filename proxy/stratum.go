@@ -223,7 +223,7 @@ case "job":
     secondParam := params[1]  // This is the header hash the miner used
     mixDigest := params[2]
 
-    log.Printf("eth_submitWork from %s: nonce=%s, headerHash=%s, mix=%s", cs.ip, nonce, secondParam[:16], mixDigest[:16])
+    log.Printf("eth_submitWork from %s: nonce=%s, headerHash=%s, mix=%s", cs.ip, nonce, shortHex(secondParam, 16), shortHex(mixDigest, 16))
 
     // Get current block template
     t := s.currentBlockTemplate()

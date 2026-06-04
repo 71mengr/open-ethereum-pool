@@ -165,9 +165,9 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
     headerHash := reply[0]
     seedHash := reply[1]
     
-    log.Printf("RandomX assignments:")
-    log.Printf("  Header Hash: %s", headerHash[:16])
-    log.Printf("  Seed Hash: %s", seedHash[:16])
+    log.Printf("GetWork assignments:")
+    log.Printf("  Header Hash (for miners/daemon): %s", shortHex(headerHash, 16))
+    log.Printf("  Seed Hash (for RandomX cache): %s", shortHex(seedHash, 16))
 
     // Calculate network difficulty from target
     networkDiff := util.TargetHexToDiff(reply[2])
@@ -202,7 +202,7 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
 
     s.blockTemplate.Store(&newTemplate)
     log.Printf("New RandomX block to mine at height %d - Header: %s, Seed: %s, Network Difficulty: %s",
-        height, headerHash[:16], seedHash[:16], networkDiff.String())
+        height, shortHex(headerHash, 16), shortHex(seedHash, 16), networkDiff.String())
 
     if s.config.Proxy.Stratum.Enabled {
         go s.broadcastNewJobs()

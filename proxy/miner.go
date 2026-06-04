@@ -49,7 +49,7 @@ func targetHexToDiff(targetHex string) *big.Int {
 }
 
 // RandomX verification helper - uses the template seed for the cache and the header hash as input
-func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, cacheSeed, headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
+func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash, nonce, mixDigest []byte, targetDiff *big.Int) (bool, error) {
     // Protect manager initialization
     s.randomxMu.Lock()
     if s.randomxManager == nil {
@@ -77,8 +77,8 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, cacheSeed, headerHash
     // submitted second eth_submitWork parameter is the header hash from
     // eth_getWork[0], not the cache seed; using it as the seed causes local
     // verification to reject otherwise valid shares with a hash mismatch.
-    if len(cacheSeed) != 32 {
-        log.Printf("Invalid cache seed length: %d", len(cacheSeed))
+    if len(seedHash) != 32 {
+        log.Printf("Invalid seed hash length: %d", len(seedHash))
         return false, nil
     }
     if len(headerHash) != 32 {
@@ -86,9 +86,9 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, cacheSeed, headerHash
         return false, nil
     }
 
-    log.Printf("Getting RandomX cache - Height: %d, Epoch: %d, Seed: %x, Header: %x", height, epoch, cacheSeed[:8], headerHash[:8])
+    log.Printf("Getting RandomX cache - Height: %d, Epoch: %d, Seed: %x, Header: %x", height, epoch, seedHash[:8], headerHash[:8])
 
-    cache, err := manager.GetCache(epoch, cacheSeed)
+    cache, err := manager.GetCache(epoch, seedHash)
     if err != nil {
         log.Printf("Failed to get RandomX cache: %v", err)
         return false, err
@@ -133,8 +133,7 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, cacheSeed, headerHash
             return hashDiff.Cmp(targetDiff) >= 0, nil
         }
     }
-
-    log.Printf("✗ Hash mismatch for seed %x and header %x", cacheSeed[:8], headerHash[:8])
+    log.Printf("✗ Hash mismatch for seed %x and header %x", seedHash[:8], headerHash[:8])
     return false, nil
 }
 
@@ -144,6 +143,13 @@ func reverseBytes(input []byte) []byte {
         output[i] = input[len(input)-1-i]
     }
     return output
+}
+
+func shortHex(hexStr string, length int) string {
+    if len(hexStr) <= length {
+        return hexStr
+    }
+    return hexStr[:length]
 }
 
 func hexToBytes(hexStr string) []byte {
@@ -183,15 +189,15 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
 
     // Miner's original params: [nonce, headerHash, mixDigest]
     nonceHex := params[0]
-    submittedHeaderHashHex := params[1]
+    minerHeaderHashHex := params[1]
     mixDigestHex := params[2]
 
     // DEBUG: Log what we have
     log.Printf("DEBUG: t.Header = %s", t.Header)
     log.Printf("DEBUG: t.Seed = %s", t.Seed)
     log.Printf("DEBUG: Miner nonce = %s", nonceHex)
-    log.Printf("DEBUG: Miner headerHash = %s", submittedHeaderHashHex[:16])
-    log.Printf("DEBUG: Miner mixDigest = %s", mixDigestHex[:16])
+    log.Printf("DEBUG: Miner headerHash = %s", shortHex(minerHeaderHashHex, 16))
+    log.Printf("DEBUG: Miner mixDigest = %s", shortHex(mixDigestHex, 16))
 
     // Format params for daemon RPC call
     // Daemon's VerifySeal expects: [nonce, headerHash, mixDigest]
@@ -206,11 +212,10 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     
     // Parameter 2: HEADER HASH from block template (NOT from miner!)
     // This is the hash from eth_getWork[0]
-    headerHash := strings.TrimPrefix(t.Header, "0x")
-    if !strings.HasPrefix(headerHash, "0x") {
-        formattedParams[1] = "0x" + headerHash
+    if !strings.HasPrefix(minerHeaderHashHex, "0x") {
+        formattedParams[1] = "0x" + minerHeaderHashHex
     } else {
-        formattedParams[1] = headerHash
+        formattedParams[1] = minerHeaderHashHex
     }
     
     // Parameter 3: Mix digest (use miner's mix digest)
@@ -222,8 +227,8 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     
     log.Printf("Submitting to daemon:")
     log.Printf("  nonce=%s", formattedParams[0])
-    log.Printf("  headerHash=%s...", formattedParams[1][:16])
-    log.Printf("  mixDigest=%s...", formattedParams[2][:16])
+    log.Printf("  headerHash=%s...", shortHex(formattedParams[1], 16))
+    log.Printf("  mixDigest=%s...", shortHex(formattedParams[2], 16))
 
     // Calculate share difficulty for logging and local pool validation.
     mixDigest := hexToBytes(mixDigestHex)
@@ -243,10 +248,10 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     // eth_submitWork only accepts full block candidates.  Validate normal pool
     // shares locally so valid shares below network difficulty are not rejected
     // by the daemon, as shown by Hash Diff < Network Diff in the logs.
-    cacheSeed := hexToBytes(t.Seed)
-    headerHashBytes := hexToBytes(t.Header)
+    seedHash := hexToBytes(t.Seed)
+    headerHash := hexToBytes(minerHeaderHashHex)
     nonce := hexToBytes(nonceHex)
-    validShare, err := s.verifyRandomXShare(t, cacheSeed, headerHashBytes, nonce, mixDigest, poolDiff)
+    validShare, err := s.verifyRandomXShare(t, seedHash, headerHash, nonce, mixDigest, poolDiff)
     if err != nil {
         log.Printf("RandomX share verification error: %v", err)
         return false, false
