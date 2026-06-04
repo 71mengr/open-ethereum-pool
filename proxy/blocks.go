@@ -143,35 +143,39 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
         return
     }
 
-    // Get current height for epoch calculation
+    // Get current height
     height := s.getCurrentHeight()
     if height == 0 {
+        log.Printf("Failed to get current height for RandomX block template")
         return
     }
 
-    // Use the seed hash returned by eth_getWork so miners and verification use
-    // the same daemon-provided work parameters.
-    seedHashStr := reply[1]
-
-    // No need to update, we have fresh job
+    // Calculate network difficulty from target
+    networkDiff := util.TargetHexToDiff(reply[2])
+    
+    // No need to update if we have fresh job
     if t != nil && t.Header == reply[0] {
         return
     }
 
+    log.Printf("New RandomX template - Height: %d, Target: %s, Network Difficulty: %s", 
+        height, reply[2], networkDiff.String())
+
     newTemplate := BlockTemplate{
         Header:     reply[0],
-        Seed:       seedHashStr,  // Now this is a string
+        Seed:       reply[1],
         Target:     reply[2],
         Height:     height,
-        Difficulty: util.TargetHexToDiff(reply[2]),
+        Difficulty: networkDiff,  // Store the network difficulty
         headers:    make(map[string]heightDiffPair),
     }
 
     newTemplate.headers[reply[0]] = heightDiffPair{
-        diff:   newTemplate.Difficulty,
+        diff:   networkDiff,
         height: height,
     }
 
+    // Keep backlog
     if t != nil {
         for k, v := range t.headers {
             if v.height > height-maxBacklog {
@@ -181,7 +185,8 @@ func (s *ProxyServer) fetchRandomXBlockTemplate() {
     }
 
     s.blockTemplate.Store(&newTemplate)
-    log.Printf("New RandomX block to mine on %s at height %d / %s", rpc.Name, height, reply[0][0:10])
+    log.Printf("New RandomX block to mine on %s at height %d - Network Difficulty: %s", 
+        rpc.Name, height, networkDiff.String())
 
     if s.config.Proxy.Stratum.Enabled {
         go s.broadcastNewJobs()
@@ -199,4 +204,52 @@ func (s *ProxyServer) getCurrentHeight() uint64 {
         return 0
     }
     return height
+}
+
+// GetNetworkDifficulty returns the current network difficulty from the block template
+func (t *BlockTemplate) GetNetworkDifficulty() *big.Int {
+    if t == nil {
+        return big.NewInt(0)
+    }
+    t.RLock()
+    defer t.RUnlock()
+    
+    if t.Difficulty != nil {
+        return new(big.Int).Set(t.Difficulty)
+    }
+    
+    // Fallback: parse from Target string
+    if t.Target != "" {
+        return util.TargetHexToDiff(t.Target)
+    }
+    
+    return big.NewInt(0)
+}
+
+// GetNetworkTarget returns the current network target as big.Int
+func (t *BlockTemplate) GetNetworkTarget() *big.Int {
+    if t == nil {
+        return big.NewInt(0)
+    }
+    t.RLock()
+    defer t.RUnlock()
+    
+    if t.Target != "" {
+        targetHex := strings.TrimPrefix(t.Target, "0x")
+        targetBytes, err := hex.DecodeString(targetHex)
+        if err != nil {
+            return big.NewInt(0)
+        }
+        return new(big.Int).SetBytes(targetBytes)
+    }
+    
+    return big.NewInt(0)
+}
+
+// GetPoolShareDifficulty returns the pool's share difficulty from config
+func (s *ProxyServer) GetPoolShareDifficulty() int64 {
+    if s.config.Proxy.RandomX.Enabled && s.config.Proxy.RandomX.ShareDifficulty > 0 {
+        return s.config.Proxy.RandomX.ShareDifficulty
+    }
+    return s.config.Proxy.Difficulty
 }

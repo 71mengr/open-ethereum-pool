@@ -161,13 +161,23 @@ func (r *RPCClient) GetTxReceipt(hash string) (*TxReceipt, error) {
 }
 
 func (r *RPCClient) SubmitBlock(params []string) (bool, error) {
-	rpcResp, err := r.doPost(r.Url, "eth_submitWork", params)
-	if err != nil {
-		return false, err
-	}
-	var reply bool
-	err = json.Unmarshal(*rpcResp.Result, &reply)
-	return reply, err
+    // Add 0x prefix to all params if missing
+    formattedParams := make([]interface{}, len(params))
+    for i, param := range params {
+        if !strings.HasPrefix(param, "0x") {
+            formattedParams[i] = "0x" + param
+        } else {
+            formattedParams[i] = param
+        }
+    }
+    
+    rpcResp, err := r.doPost(r.Url, "eth_submitWork", formattedParams)
+    if err != nil {
+        return false, err
+    }
+    var reply bool
+    err = json.Unmarshal(*rpcResp.Result, &reply)
+    return reply, err
 }
 
 func (r *RPCClient) GetBalance(address string) (*big.Int, error) {

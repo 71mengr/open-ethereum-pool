@@ -1,12 +1,12 @@
 package proxy
 
 import (
-	"log"
-	"regexp"
-	"strings"
+        "log"
+        "regexp"
+        "strings"
 
-	"github.com/sammy007/open-ethereum-pool/rpc"
-	"github.com/sammy007/open-ethereum-pool/util"
+        "github.com/sammy007/open-ethereum-pool/rpc"
+        "github.com/sammy007/open-ethereum-pool/util"
 )
 
 // Allow only lowercase hexadecimal with 0x prefix
@@ -16,94 +16,128 @@ var workerPattern = regexp.MustCompile("^[0-9a-zA-Z-_]{1,8}$")
 
 // Stratum
 func (s *ProxyServer) handleLoginRPC(cs *Session, params []string, id string) (bool, *ErrorReply) {
-	if len(params) == 0 {
-		return false, &ErrorReply{Code: -1, Message: "Invalid params"}
-	}
+        if len(params) == 0 {
+                return false, &ErrorReply{Code: -1, Message: "Invalid params"}
+        }
 
-	login := strings.ToLower(params[0])
-	if !util.IsValidHexAddress(login) {
-		return false, &ErrorReply{Code: -1, Message: "Invalid login"}
-	}
-	if !s.policy.ApplyLoginPolicy(login, cs.ip) {
-		return false, &ErrorReply{Code: -1, Message: "You are blacklisted"}
-	}
-	cs.login = login
-	s.registerSession(cs)
-	log.Printf("Stratum miner connected %v@%v", login, cs.ip)
-	return true, nil
+        login := strings.ToLower(params[0])
+        if !util.IsValidHexAddress(login) {
+                return false, &ErrorReply{Code: -1, Message: "Invalid login"}
+        }
+        if !s.policy.ApplyLoginPolicy(login, cs.ip) {
+                return false, &ErrorReply{Code: -1, Message: "You are blacklisted"}
+        }
+        cs.login = login
+        s.registerSession(cs)
+        log.Printf("Stratum miner connected %v@%v", login, cs.ip)
+        return true, nil
 }
 
 func (s *ProxyServer) handleGetWorkRPC(cs *Session) ([]string, *ErrorReply) {
-	t := s.currentBlockTemplate()
-	if t == nil || len(t.Header) == 0 || s.isSick() {
-		return nil, &ErrorReply{Code: 0, Message: "Work not ready"}
-	}
-	return []string{t.Header, t.Seed, s.diff}, nil
+    t := s.currentBlockTemplate()
+    if t == nil || len(t.Header) == 0 || s.isSick() {
+        return nil, &ErrorReply{Code: 0, Message: "Work not ready"}
+    }
+    
+    // For RandomX, return the seed hash that miners expect
+    var seedHash string
+    if s.config.Proxy.RandomX.Enabled {
+        // If height < 2048 (epoch 0), miners are using epoch 1 seed hash
+        // This is a miner quirk - they calculate seed hash for next epoch
+        if t.Height < 2048 {
+            // Epoch 1 seed hash = Keccak256(zeros)
+            seedHash = "0x29740b7c456ee8ae0c73f40aff4815a93b757edea226157af315ad8effa3f2b8"
+            log.Printf("Returning epoch 1 seed hash for height %d (miners expect this)", t.Height)
+        } else {
+            seedHash = t.Seed
+        }
+    } else {
+        seedHash = t.Seed
+    }
+    
+    return []string{t.Header, seedHash, s.diff}, nil
 }
 
 // Stratum
 func (s *ProxyServer) handleTCPSubmitRPC(cs *Session, id string, params []string) (bool, *ErrorReply) {
-	s.sessionsMu.RLock()
-	_, ok := s.sessions[cs]
-	s.sessionsMu.RUnlock()
+        s.sessionsMu.RLock()
+        _, ok := s.sessions[cs]
+        s.sessionsMu.RUnlock()
 
-	if !ok {
-		return false, &ErrorReply{Code: 25, Message: "Not subscribed"}
-	}
-	return s.handleSubmitRPC(cs, cs.login, id, params)
+        if !ok {
+                return false, &ErrorReply{Code: 25, Message: "Not subscribed"}
+        }
+        return s.handleSubmitRPC(cs, cs.login, id, params)
 }
 
 func (s *ProxyServer) handleSubmitRPC(cs *Session, login, id string, params []string) (bool, *ErrorReply) {
-	if !workerPattern.MatchString(id) {
-		id = "0"
-	}
-	if len(params) != 3 {
-		s.policy.ApplyMalformedPolicy(cs.ip)
-		log.Printf("Malformed params from %s@%s %v", login, cs.ip, params)
-		return false, &ErrorReply{Code: -1, Message: "Invalid params"}
-	}
+    if !workerPattern.MatchString(id) {
+        id = "0"
+    }
+    if len(params) != 3 {
+        s.policy.ApplyMalformedPolicy(cs.ip)
+        log.Printf("Malformed params from %s@%s %v", login, cs.ip, params)
+        return false, &ErrorReply{Code: -1, Message: "Invalid params"}
+    }
 
-	if !noncePattern.MatchString(params[0]) || !hashPattern.MatchString(params[1]) || !hashPattern.MatchString(params[2]) {
-		s.policy.ApplyMalformedPolicy(cs.ip)
-		log.Printf("Malformed PoW result from %s@%s %v", login, cs.ip, params)
-		return false, &ErrorReply{Code: -1, Message: "Malformed PoW result"}
-	}
-	t := s.currentBlockTemplate()
-	exist, validShare := s.processShare(login, id, cs.ip, t, params)
-	ok := s.policy.ApplySharePolicy(cs.ip, !exist && validShare)
+    // For RandomX, params are [nonce, seedHash, mixDigest]
+    // All should be valid hex strings (with or without 0x)
+    if !noncePattern.MatchString(params[0]) {
+        s.policy.ApplyMalformedPolicy(cs.ip)
+        log.Printf("Malformed nonce from %s@%s %v", login, cs.ip, params[0])
+        return false, &ErrorReply{Code: -1, Message: "Malformed nonce"}
+    }
+    
+    // For RandomX, second param is seed hash (should be 32 bytes / 64 hex chars)
+    if !hashPattern.MatchString(params[1]) {
+        s.policy.ApplyMalformedPolicy(cs.ip)
+        log.Printf("Malformed seed hash from %s@%s %v", login, cs.ip, params[1])
+        return false, &ErrorReply{Code: -1, Message: "Malformed seed hash"}
+    }
+    
+    // Third param is mix digest (32 bytes / 64 hex chars)
+    if !hashPattern.MatchString(params[2]) {
+        s.policy.ApplyMalformedPolicy(cs.ip)
+        log.Printf("Malformed mix digest from %s@%s %v", login, cs.ip, params[2])
+        return false, &ErrorReply{Code: -1, Message: "Malformed mix digest"}
+    }
+    
+    t := s.currentBlockTemplate()
+    exist, validShare := s.processShare(login, id, cs.ip, t, params)
+    ok := s.policy.ApplySharePolicy(cs.ip, !exist && validShare)
 
-	if exist {
-		log.Printf("Duplicate share from %s@%s %v", login, cs.ip, params)
-		return false, &ErrorReply{Code: 22, Message: "Duplicate share"}
-	}
+    if exist {
+        log.Printf("Duplicate share from %s@%s %v", login, cs.ip, params)
+        return false, &ErrorReply{Code: 22, Message: "Duplicate share"}
+    }
 
-	if !validShare {
-		log.Printf("Invalid share from %s@%s", login, cs.ip)
-		// Bad shares limit reached, return error and close
-		if !ok {
-			return false, &ErrorReply{Code: 23, Message: "Invalid share"}
-		}
-		return false, nil
-	}
-	log.Printf("Valid share from %s@%s", login, cs.ip)
+    if !validShare {
+        log.Printf("Invalid share from %s@%s", login, cs.ip)
+        // Bad shares limit reached, return error and close
+        if !ok {
+            return false, &ErrorReply{Code: 23, Message: "Invalid share"}
+        }
+        return false, nil
+    }
+    log.Printf("Valid share from %s@%s", login, cs.ip)
 
-	if !ok {
-		return true, &ErrorReply{Code: -1, Message: "High rate of invalid shares"}
-	}
-	return true, nil
+    if !ok {
+        return true, &ErrorReply{Code: -1, Message: "High rate of invalid shares"}
+    }
+    return true, nil
 }
 
 func (s *ProxyServer) handleGetBlockByNumberRPC() *rpc.GetBlockReplyPart {
-	t := s.currentBlockTemplate()
-	var reply *rpc.GetBlockReplyPart
-	if t != nil {
-		reply = t.GetPendingBlockCache
-	}
-	return reply
+        t := s.currentBlockTemplate()
+        var reply *rpc.GetBlockReplyPart
+        if t != nil {
+                reply = t.GetPendingBlockCache
+        }
+        return reply
 }
 
 func (s *ProxyServer) handleUnknownRPC(cs *Session, m string) *ErrorReply {
-	log.Printf("Unknown request method %s from %s", m, cs.ip)
-	s.policy.ApplyMalformedPolicy(cs.ip)
-	return &ErrorReply{Code: -3, Message: "Method not found"}
+        log.Printf("Unknown request method %s from %s", m, cs.ip)
+        s.policy.ApplyMalformedPolicy(cs.ip)
+        return &ErrorReply{Code: -3, Message: "Method not found"}
 }

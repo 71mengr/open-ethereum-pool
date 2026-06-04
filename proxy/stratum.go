@@ -9,7 +9,6 @@ import (
         "net"
         "time"
         "strings"
-        "math/big"
         "github.com/sammy007/open-ethereum-pool/util"
 )
 
@@ -111,7 +110,7 @@ case "login":
                 log.Printf("Failed to parse login params from %s: %v", cs.ip, err)
                 return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid login params"})
         }
-        
+
         login, ok := objParams["login"].(string)
         if !ok {
                 login, ok = objParams["user"].(string)
@@ -119,24 +118,19 @@ case "login":
         if !ok {
                 return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid login params"})
         }
-        
+
         log.Printf("XMRig login from %s: user=%s", cs.ip, login)
-        
+
         t := s.currentBlockTemplate()
         if t == nil || len(t.Header) == 0 {
                 return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Work not ready"})
         }
-        
+
         // Remove 0x prefix from all hex fields
         header := strings.TrimPrefix(t.Header, "0x")
         seedHash := strings.TrimPrefix(t.Seed, "0x")
-        target := strings.TrimPrefix(t.Target, "0x")
-        
-        // Ensure target is 64 chars (pad with leading zeros if needed)
-        for len(target) < 64 {
-                target = "0" + target
-        }
-        
+        target := formatTarget(s.diff)
+
         job := map[string]interface{}{
                 "blob":      header,
                 "job_id":    "1",
@@ -144,18 +138,18 @@ case "login":
                 "seed_hash": seedHash,
                 "height":    t.Height,
         }
-        
+
         response := map[string]interface{}{
                 "id":     login,
                 "job":    job,
                 "status": "OK",
         }
-        
+
         log.Printf("Login response for %s: blob=%s..., target=%s", cs.ip, header[:32], target[:16])
-        
+
         cs.login = login
         s.registerSession(cs)
-        
+
         return cs.sendTCPResult(req.Id, response)
 
 case "job":
@@ -163,29 +157,33 @@ case "job":
     if t == nil || len(t.Header) == 0 {
         return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Work not ready"})
     }
-    
+
     // Remove 0x prefix for XMRig
     header := strings.TrimPrefix(t.Header, "0x")
     seedHash := strings.TrimPrefix(t.Seed, "0x")
-    target := strings.TrimPrefix(t.Target, "0x")
-    
-    // Ensure target is exactly 64 hex characters
-    for len(target) < 64 {
-        target = "0" + target
+    target := formatTarget(s.diff)
+
+    // Force epoch 0 seed hash for heights < 2048
+    var finalSeedHash string
+    if t.Height < 2048 {
+        finalSeedHash = "0000000000000000000000000000000000000000000000000000000000000000"
+        log.Printf("Using forced epoch 0 seed hash for height %d", t.Height)
+    } else {
+        finalSeedHash = seedHash
     }
-    if len(target) > 64 {
-        target = target[:64]
-    }
-    
+
+    // XMRig expects these exact field names
     job := map[string]interface{}{
-        "blob":      header,
-        "job_id":    "1",
-        "target":    target,      // XMRig expects 64-char hex WITHOUT 0x
-        "seed_hash": seedHash,
-        "height":    t.Height,
+        "blob":      header,           // The block header hash (without nonce)
+        "job_id":    "1",              // Job ID
+        "target":    target,           // Pool target (64-char hex WITHOUT 0x)
+        "seed_hash": finalSeedHash,    // CRITICAL: Must match what XMRig expects
+        "height":    t.Height,         // Current block height
     }
+
+    log.Printf("Sending job to %s: height=%d, seed_hash=%s, target=%s", 
+        cs.ip, t.Height, finalSeedHash[:16], target[:16])
     
-    log.Printf("Sending job to %s: target=%s (len=%d)", cs.ip, target[:16], len(target))
     return cs.sendTCPResult(req.Id, job)
 
         // Original Ethereum methods
@@ -209,55 +207,50 @@ case "job":
                 }
                 return cs.sendTCPResult(req.Id, &reply)
 
-case "eth_submitWork":
-        var params []string
-        if err := json.Unmarshal(req.Params, &params); err != nil {
-                log.Println("Malformed stratum submitWork params from", cs.ip)
-                return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid params"})
-        }
-        
-        // eth_submitWork params: [nonce, headerHash, mixDigest]
-        if len(params) < 3 {
-                log.Printf("Invalid eth_submitWork params from %s: expected 3, got %d", cs.ip, len(params))
-                return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid params"})
-        }
-        
-        nonce := params[0]
-        headerHash := params[1]
-        mixDigest := params[2]
-        
-        log.Printf("eth_submitWork from %s: nonce=%s, header=%s, mix=%s", cs.ip, nonce, headerHash[:16], mixDigest[:16])
-        
-        // Get current block template
-        t := s.currentBlockTemplate()
-        if t == nil {
-                log.Printf("No block template for eth_submitWork from %s", cs.ip)
-                return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Block template expired"})
-        }
-        
-        // Verify header hash matches current job
-        if headerHash != t.Header && "0x"+headerHash != t.Header {
-                log.Printf("Header mismatch from %s: expected %s, got %s", cs.ip, t.Header, headerHash)
-                return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid header hash"})
-        }
+ case "eth_submitWork":
+    var params []string
+    if err := json.Unmarshal(req.Params, &params); err != nil {
+        log.Println("Malformed stratum submitWork params from", cs.ip)
+        return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid params"})
+    }
 
-        // Process the share
-        params = []string{nonce, headerHash, mixDigest}
-        exist, validShare := s.processShare(cs.login, "", cs.ip, t, params)
+    if len(params) < 3 {
+        log.Printf("Invalid eth_submitWork params from %s: expected 3, got %d", cs.ip, len(params))
+        return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid params"})
+    }
 
-        if exist {
-                log.Printf("Duplicate eth_submitWork share from %s", cs.ip)
-                return cs.sendTCPError(req.Id, &ErrorReply{Code: 22, Message: "Duplicate share"})
-        }
+    nonce := params[0]
+    secondParam := params[1]  // This is the seed hash the miner used
+    mixDigest := params[2]
 
-        if !validShare {
-                log.Printf("Invalid eth_submitWork share from %s", cs.ip)
-                return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid share"})
-        }
+    log.Printf("eth_submitWork from %s: nonce=%s, seedHash=%s, mix=%s", cs.ip, nonce, secondParam[:16], mixDigest[:16])
 
-        log.Printf("Share accepted from %s", cs.ip)
+    // Get current block template
+    t := s.currentBlockTemplate()
+    if t == nil {
+        log.Printf("No block template for eth_submitWork from %s", cs.ip)
+        return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Block template expired"})
+    }
 
-        return cs.sendTCPResult(req.Id, true)
+    // Use the miner's seed hash for verification (don't replace it)
+    // The miner knows what seed hash it used to calculate the mix digest
+    params = []string{nonce, secondParam, mixDigest}
+
+    exist, validShare := s.processShare(cs.login, "", cs.ip, t, params)
+
+    if exist {
+        log.Printf("Duplicate eth_submitWork share from %s", cs.ip)
+        return cs.sendTCPError(req.Id, &ErrorReply{Code: 22, Message: "Duplicate share"})
+    }
+
+    if !validShare {
+        log.Printf("Invalid eth_submitWork share from %s", cs.ip)
+        return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "Invalid share"})
+    }
+
+    log.Printf("Share accepted from %s", cs.ip)
+
+    return cs.sendTCPResult(req.Id, true)
 
         case "eth_submitHashrate":
                 return cs.sendTCPResult(req.Id, true)
@@ -314,38 +307,75 @@ func (s *ProxyServer) removeSession(cs *Session) {
 }
 
 func (s *ProxyServer) broadcastNewJobs() {
-        t := s.currentBlockTemplate()
-        if t == nil || len(t.Header) == 0 || s.isSick() {
-                return
-        }
+    t := s.currentBlockTemplate()
+    if t == nil || len(t.Header) == 0 || s.isSick() {
+        return
+    }
+    
+    if s.config.Proxy.RandomX.Enabled {
+        // For RandomX, send job with seed hash
+        // Format: [headerHash, seedHash, target]
         reply := []string{t.Header, t.Seed, s.diff}
-
+        
         s.sessionsMu.RLock()
         defer s.sessionsMu.RUnlock()
-
+        
         count := len(s.sessions)
-        log.Printf("Broadcasting new job to %v stratum miners", count)
-
+        log.Printf("Broadcasting new RandomX job to %v stratum miners", count)
+        log.Printf("Job details - Header: %s, Seed: %s, Target: %s", 
+            t.Header[:16], t.Seed[:16], s.diff[:16])
+        
         start := time.Now()
         bcast := make(chan int, 1024)
         n := 0
-
+        
         for m, _ := range s.sessions {
-                n++
-                bcast <- n
-
-                go func(cs *Session) {
-                        err := cs.pushNewJob(&reply)
-                        <-bcast
-                        if err != nil {
-                                log.Printf("Job transmit error to %v@%v: %v", cs.login, cs.ip, err)
-                                s.removeSession(cs)
-                        } else {
-                                s.setDeadline(cs.conn)
-                        }
-                }(m)
+            n++
+            bcast <- n
+            
+            go func(cs *Session) {
+                err := cs.pushNewJob(&reply)
+                <-bcast
+                if err != nil {
+                    log.Printf("Job transmit error to %v@%v: %v", cs.login, cs.ip, err)
+                    s.removeSession(cs)
+                } else {
+                    s.setDeadline(cs.conn)
+                }
+            }(m)
         }
         log.Printf("Jobs broadcast finished %s", time.Since(start))
+    } else {
+        // Original Ethereum job format
+        reply := []string{t.Header, t.Seed, s.diff}
+        
+        s.sessionsMu.RLock()
+        defer s.sessionsMu.RUnlock()
+        
+        count := len(s.sessions)
+        log.Printf("Broadcasting new job to %v stratum miners", count)
+        
+        start := time.Now()
+        bcast := make(chan int, 1024)
+        n := 0
+        
+        for m, _ := range s.sessions {
+            n++
+            bcast <- n
+            
+            go func(cs *Session) {
+                err := cs.pushNewJob(&reply)
+                <-bcast
+                if err != nil {
+                    log.Printf("Job transmit error to %v@%v: %v", cs.login, cs.ip, err)
+                    s.removeSession(cs)
+                } else {
+                    s.setDeadline(cs.conn)
+                }
+            }(m)
+        }
+        log.Printf("Jobs broadcast finished %s", time.Since(start))
+    }
 }
 
 func (cs *Session) handleGetWorkRPC(s *ProxyServer) ([]string, *ErrorReply) {
@@ -356,34 +386,12 @@ func (cs *Session) handleGetWorkRPC(s *ProxyServer) ([]string, *ErrorReply) {
 
     header := strings.TrimPrefix(t.Header, "0x")
     seed := strings.TrimPrefix(t.Seed, "0x")
-    target := strings.TrimPrefix(t.Target, "0x")
+    target := formatTarget(s.diff)
 
-    // Calculate difficulty from target
-    // maxUint256 = 2^256 - 1
-    maxUint256 := new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
-    maxUint256.Sub(maxUint256, big.NewInt(1))
+    log.Printf("eth_getWork for %s: target=%s...", cs.ip, target[:16])
 
-    targetBig := new(big.Int)
-    targetBig.SetString(target, 16)
-    
-    // Avoid division by zero
-    if targetBig.Sign() == 0 {
-        targetBig.SetUint64(1)
-    }
-    
-    difficulty := new(big.Int).Div(maxUint256, targetBig)
-
-    // Ensure difficulty is at least 1
-    if difficulty.Sign() == 0 {
-        difficulty.SetUint64(1)
-    }
-
-    diffStr := difficulty.String()
-
-    log.Printf("eth_getWork for %s: target=%s..., difficulty=%s", cs.ip, target[:16], diffStr[:min(10, len(diffStr))])
-
-    // Return with 0x prefix for header and seed, plain decimal for difficulty
-    reply := []string{"0x" + header, "0x" + seed, diffStr}
+    // Return the configured pool share target as the getWork boundary.
+    reply := []string{"0x" + header, "0x" + seed, "0x" + target}
     return reply, nil
 }
 

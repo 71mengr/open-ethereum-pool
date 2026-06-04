@@ -32,7 +32,7 @@ type ProxyServer struct {
 
         // RandomX support
         randomxManager   *RandomXManager
-
+        randomxMu      sync.RWMutex
         // Stratum
         sessionsMu sync.RWMutex
         sessions   map[*Session]struct{}

@@ -34,6 +34,7 @@ type RandomXConfig struct {
     CacheSizeMB    uint64 `json:"cacheSizeMB"`
     DatasetSizeGB  uint64 `json:"datasetSizeGB"`
     MinMemory      uint64 `json:"minMemory"`
+    ShareDifficulty int64  `json:"shareDifficulty"`
 }
 
 type Proxy struct {
