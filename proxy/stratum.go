@@ -181,9 +181,9 @@ case "job":
         "height":    t.Height,         // Current block height
     }
 
-    log.Printf("Sending job to %s: height=%d, seed_hash=%s, target=%s", 
+    log.Printf("Sending job to %s: height=%d, seed_hash=%s, target=%s",
         cs.ip, t.Height, finalSeedHash[:16], target[:16])
-    
+
     return cs.sendTCPResult(req.Id, job)
 
         // Original Ethereum methods
@@ -312,70 +312,40 @@ func (s *ProxyServer) broadcastNewJobs() {
         return
     }
     
-    if s.config.Proxy.RandomX.Enabled {
-        // For RandomX, send job with seed hash
-        // Format: [headerHash, seedHash, target]
-        reply := []string{t.Header, t.Seed, s.diff}
-        
-        s.sessionsMu.RLock()
-        defer s.sessionsMu.RUnlock()
-        
-        count := len(s.sessions)
-        log.Printf("Broadcasting new RandomX job to %v stratum miners", count)
-        log.Printf("Job details - Header: %s, Seed: %s, Target: %s", 
-            t.Header[:16], t.Seed[:16], s.diff[:16])
-        
-        start := time.Now()
-        bcast := make(chan int, 1024)
-        n := 0
-        
-        for m, _ := range s.sessions {
-            n++
-            bcast <- n
-            
-            go func(cs *Session) {
-                err := cs.pushNewJob(&reply)
-                <-bcast
-                if err != nil {
-                    log.Printf("Job transmit error to %v@%v: %v", cs.login, cs.ip, err)
-                    s.removeSession(cs)
-                } else {
-                    s.setDeadline(cs.conn)
-                }
-            }(m)
-        }
-        log.Printf("Jobs broadcast finished %s", time.Since(start))
-    } else {
-        // Original Ethereum job format
-        reply := []string{t.Header, t.Seed, s.diff}
-        
-        s.sessionsMu.RLock()
-        defer s.sessionsMu.RUnlock()
-        
-        count := len(s.sessions)
-        log.Printf("Broadcasting new job to %v stratum miners", count)
-        
-        start := time.Now()
-        bcast := make(chan int, 1024)
-        n := 0
-        
-        for m, _ := range s.sessions {
-            n++
-            bcast <- n
-            
-            go func(cs *Session) {
-                err := cs.pushNewJob(&reply)
-                <-bcast
-                if err != nil {
-                    log.Printf("Job transmit error to %v@%v: %v", cs.login, cs.ip, err)
-                    s.removeSession(cs)
-                } else {
-                    s.setDeadline(cs.conn)
-                }
-            }(m)
-        }
-        log.Printf("Jobs broadcast finished %s", time.Since(start))
+    // Remove 0x prefix for miners
+    header := strings.TrimPrefix(t.Header, "0x")  // This is the actual header hash
+    seed := strings.TrimPrefix(t.Seed, "0x")      // This is the seed hash for RandomX
+    target := formatTarget(s.diff)
+    
+    reply := []string{header, seed, target}
+
+    s.sessionsMu.RLock()
+    defer s.sessionsMu.RUnlock()
+
+    //count := len(s.sessions)
+    log.Printf("Broadcasting job - Height: %d, Header: %s..., Seed: %s...", 
+        t.Height, header[:16], seed[:16])
+
+    start := time.Now()
+    bcast := make(chan int, 1024)
+    n := 0
+
+    for m := range s.sessions {
+        n++
+        bcast <- n
+
+        go func(cs *Session) {
+            err := cs.pushNewJob(&reply)
+            <-bcast
+            if err != nil {
+                log.Printf("Job transmit error to %v@%v: %v", cs.login, cs.ip, err)
+                s.removeSession(cs)
+            } else {
+                s.setDeadline(cs.conn)
+            }
+        }(m)
     }
+    log.Printf("Jobs broadcast finished %s", time.Since(start))
 }
 
 func (cs *Session) handleGetWorkRPC(s *ProxyServer) ([]string, *ErrorReply) {

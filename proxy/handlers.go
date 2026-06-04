@@ -39,23 +39,9 @@ func (s *ProxyServer) handleGetWorkRPC(cs *Session) ([]string, *ErrorReply) {
         return nil, &ErrorReply{Code: 0, Message: "Work not ready"}
     }
     
-    // For RandomX, return the seed hash that miners expect
-    var seedHash string
-    if s.config.Proxy.RandomX.Enabled {
-        // If height < 2048 (epoch 0), miners are using epoch 1 seed hash
-        // This is a miner quirk - they calculate seed hash for next epoch
-        if t.Height < 2048 {
-            // Epoch 1 seed hash = Keccak256(zeros)
-            seedHash = "0x29740b7c456ee8ae0c73f40aff4815a93b757edea226157af315ad8effa3f2b8"
-            log.Printf("Returning epoch 1 seed hash for height %d (miners expect this)", t.Height)
-        } else {
-            seedHash = t.Seed
-        }
-    } else {
-        seedHash = t.Seed
-    }
-    
-    return []string{t.Header, seedHash, s.diff}, nil
+    // Return the daemon-provided seed hash so miners submit shares with the
+    // same epoch seed that the daemon will use for eth_submitWork validation.
+    return []string{t.Header, t.Seed, s.diff}, nil
 }
 
 // Stratum

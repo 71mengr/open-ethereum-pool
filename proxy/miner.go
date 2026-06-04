@@ -175,20 +175,51 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
         return false, false
     }
 
-    // Get the mix digest for difficulty calculation
+    // Miner's original params: [nonce, seedHash, mixDigest]
+    nonceHex := params[0]
+    minerSeedHashHex := params[1]
     mixDigestHex := params[2]
 
-    // Format params with 0x prefix for daemon RPC call
-    formattedParams := make([]string, 3)
-    for i, p := range params {
-        if !strings.HasPrefix(p, "0x") {
-            formattedParams[i] = "0x" + p
-        } else {
-            formattedParams[i] = p
-        }
-    }
+    // DEBUG: Log what we have
+    log.Printf("DEBUG: t.Header = %s", t.Header)
+    log.Printf("DEBUG: t.Seed = %s", t.Seed)
+    log.Printf("DEBUG: Miner nonce = %s", nonceHex)
+    log.Printf("DEBUG: Miner seedHash = %s", minerSeedHashHex[:16])
+    log.Printf("DEBUG: Miner mixDigest = %s", mixDigestHex[:16])
 
-    // Calculate share difficulty (for logging only)
+    // Format params for daemon RPC call
+    // Daemon's VerifySeal expects: [nonce, headerHash, mixDigest]
+    formattedParams := make([]string, 3)
+    
+    // Parameter 1: Nonce (use miner's nonce)
+    if !strings.HasPrefix(nonceHex, "0x") {
+        formattedParams[0] = "0x" + nonceHex
+    } else {
+        formattedParams[0] = nonceHex
+    }
+    
+    // Parameter 2: HEADER HASH from block template (NOT from miner!)
+    // This is the hash from eth_getWork[0]
+    headerHash := strings.TrimPrefix(t.Header, "0x")
+    if !strings.HasPrefix(headerHash, "0x") {
+        formattedParams[1] = "0x" + headerHash
+    } else {
+        formattedParams[1] = headerHash
+    }
+    
+    // Parameter 3: Mix digest (use miner's mix digest)
+    if !strings.HasPrefix(mixDigestHex, "0x") {
+        formattedParams[2] = "0x" + mixDigestHex
+    } else {
+        formattedParams[2] = mixDigestHex
+    }
+    
+    log.Printf("Submitting to daemon:")
+    log.Printf("  nonce=%s", formattedParams[0])
+    log.Printf("  headerHash=%s...", formattedParams[1][:16])
+    log.Printf("  mixDigest=%s...", formattedParams[2][:16])
+
+    // Calculate share difficulty for logging
     mixDigest := hexToBytes(mixDigestHex)
     hashDiff := randomXHashDifficulty(mixDigest)
     
@@ -201,7 +232,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
     
     log.Printf("Share - Hash Diff: %s, Network Diff: %s", hashDiff.String(), networkDiff.String())
 
-    // Let the daemon verify the share
+    // Submit to daemon for verification
     ok, err := s.rpc().SubmitBlock(formattedParams)
     if err != nil {
         log.Printf("SubmitBlock error: %v", err)
