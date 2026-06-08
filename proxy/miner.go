@@ -2,6 +2,7 @@ package proxy
 
 import (
     "bytes"
+    "encoding/binary"
     "encoding/hex"
     "log"
     "math/big"
@@ -140,19 +141,15 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
         return false, nil, nil, nil
     }
 
-    // Pad nonce to 8 bytes
-    submittedNonce := make([]byte, 8)
-    copy(submittedNonce[8-len(nonce):], nonce)
-
-    // Try both endianness
-    littleEndianNonce := submittedNonce
-    bigEndianNonce := reverseBytes(submittedNonce)
+    // The daemon stores header.Nonce as a uint64 in big-endian byte order.
+    // Build the RandomX input nonce the same way so header.Nonce[:] matches
+    // the bytes hashed by local share verification.
+    bigEndianNonce := nonceBytesBigEndian(nonce)
 
     nonceCandidates := []struct {
         name  string
         bytes []byte
     }{
-        {"little-endian", littleEndianNonce},
         {"big-endian", bigEndianNonce},
     }
 
@@ -200,14 +197,22 @@ func reverseBytes(input []byte) []byte {
     return output
 }
 
-func nonceBytesToHex(nonce []byte) string {
+func nonceBytesBigEndian(nonce []byte) []byte {
     paddedNonce := make([]byte, 8)
     if len(nonce) >= 8 {
         copy(paddedNonce, nonce[len(nonce)-8:])
     } else {
         copy(paddedNonce[8-len(nonce):], nonce)
     }
-    return "0x" + hex.EncodeToString(paddedNonce)
+
+    nonceValue := binary.BigEndian.Uint64(paddedNonce)
+    bigEndianNonce := make([]byte, 8)
+    binary.BigEndian.PutUint64(bigEndianNonce, nonceValue)
+    return bigEndianNonce
+}
+
+func nonceBytesToHex(nonce []byte) string {
+    return "0x" + hex.EncodeToString(nonceBytesBigEndian(nonce))
 }
 
 func isZeroBytes(input []byte) bool {

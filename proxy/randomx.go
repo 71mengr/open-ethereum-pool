@@ -168,7 +168,7 @@ func (c *RandomXCache) ComputeHash(seedHash, nonce []byte) ([]byte, error) {
     input := make([]byte, 40)
     copy(input[:32], seedHash)
     
-    // Nonce in little-endian (matches daemon)
+    // Nonce in big-endian order to match daemon header.Nonce[:] bytes.
     copy(input[32:40], nonce[:8])
 
     output := make([]byte, 32)

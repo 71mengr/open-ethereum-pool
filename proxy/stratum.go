@@ -145,7 +145,7 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 			"status": "OK",
 		}
 
-		log.Printf("Login response for %s: blob=%s..., target=%s", cs.ip, header[:32], target[:16])
+		log.Printf("Login response for %s: blob=%s..., target=%s", cs.ip, shortHex(header, 32), shortHex(target, 16))
 
 		cs.login = login
 		s.registerSession(cs)
@@ -182,7 +182,7 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 		}
 
 		log.Printf("Sending job to %s: height=%d, seed_hash=%s, target=%s",
-			cs.ip, t.Height, finalSeedHash[:16], target[:16])
+			cs.ip, t.Height, shortHex(finalSeedHash, 16), shortHex(target, 16))
 
 		return cs.sendTCPResult(req.Id, job)
 
@@ -327,7 +327,7 @@ func (s *ProxyServer) broadcastNewJobs() {
 
 	//count := len(s.sessions)
 	log.Printf("Broadcasting job - Height: %d, Header: %s..., Seed: %s...",
-		t.Height, header[:16], seed[:16])
+		t.Height, shortHex(header, 16), shortHex(seed, 16))
 
 	start := time.Now()
 	bcast := make(chan int, 1024)
@@ -361,7 +361,7 @@ func (cs *Session) handleGetWorkRPC(s *ProxyServer) ([]string, *ErrorReply) {
 	seed := strings.TrimPrefix(t.Seed, "0x")
 	target := formatTarget(s.diff)
 
-	log.Printf("eth_getWork for %s: target=%s...", cs.ip, target[:16])
+	log.Printf("eth_getWork for %s: target=%s...", cs.ip, shortHex(target, 16))
 
 	// Return the configured pool share target as the getWork boundary.
 	reply := []string{"0x" + header, "0x" + seed, "0x" + target}
