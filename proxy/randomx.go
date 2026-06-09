@@ -1,239 +1,147 @@
+//go:build cgo && randomx
 // +build cgo,randomx
 
 package proxy
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../build/_workspace/RandomX/src
-#cgo LDFLAGS: -L${SRCDIR}/../build/_workspace/RandomX/build -lrandomx -lstdc++ -lm
+#cgo CFLAGS: -I../build/_workspace/RandomX/src
+#cgo LDFLAGS: -L../build/_workspace/RandomX/build -lrandomx -lstdc++ -lm
 #include <stdlib.h>
-#include <string.h>
 #include "randomx.h"
 */
 import "C"
+
 import (
-    "fmt"
-    "log"
-    "sync"
-    "time"
-    "unsafe"
+	"unsafe"
 )
 
+// Flags
 const (
-    RandomXEpochLength = 2048
-    RandomXCacheSize   = 256 * 1024 * 1024 // 256MB
-    RandomXDatasetSize = 2 * 1024 * 1024 * 1024 // 2GB
-    MaxConcurrentVerifications = 32
+	RANDOMX_FLAG_DEFAULT     = 0
+	RANDOMX_FLAG_FULL_MEM    = 1
+	RANDOMX_FLAG_JIT         = 2
+	RANDOMX_FLAG_HARD_AES    = 4
+	RANDOMX_FLAG_LARGE_PAGES = 8
+	RANDOMX_FLAG_SECURE      = 16
 )
 
-// RandomX flags constants
-const (
-    RandomXFlagDefault C.randomx_flags = 0
-    RandomXFlagFullMem C.randomx_flags = 1
-    RandomXFlagJIT     C.randomx_flags = 2
-    RandomXFlagHardAES C.randomx_flags = 4
-    RandomXFlagLargePages C.randomx_flags = 8
-)
-
-type RandomXCache struct {
-    cache     *C.randomx_cache
-    vm        *C.randomx_vm
-    epoch     uint64
-    createdAt time.Time
-    lastUsed  time.Time
-    mu        sync.RWMutex
+// Cache
+type Cache struct {
+	ptr *C.randomx_cache
 }
 
-type RandomXManager struct {
-    caches       map[uint64]*RandomXCache
-    mu           sync.RWMutex
-    currentEpoch uint64
-    semaphore    chan struct{} // Limit concurrent operations
+func NewCache(flags int) *Cache {
+	c := C.randomx_alloc_cache(C.randomx_flags(flags))
+	if c == nil {
+		return nil
+	}
+	return &Cache{ptr: c}
 }
 
-func NewRandomXManager() *RandomXManager {
-    return &RandomXManager{
-        caches:    make(map[uint64]*RandomXCache),
-        semaphore: make(chan struct{}, MaxConcurrentVerifications),
-    }
+func (c *Cache) Init(seed []byte) {
+	if c == nil || c.ptr == nil {
+		return
+	}
+	var seedPtr unsafe.Pointer
+	if len(seed) > 0 {
+		seedPtr = unsafe.Pointer(&seed[0])
+	}
+	C.randomx_init_cache(c.ptr, seedPtr, C.size_t(len(seed)))
 }
 
-func (m *RandomXManager) GetCache(epoch uint64, seedHash []byte) (*RandomXCache, error) {
-    if len(seedHash) == 0 {
-        return nil, fmt.Errorf("seed hash cannot be empty")
-    }
+// ComputeHash is the main method used by the proxy
+func (c *Cache) ComputeHash(headerHash, nonce []byte) ([]byte, error) {
+	if c == nil || c.ptr == nil {
+		return nil, ErrFailedToCreateCache
+	}
 
-    // Fast path: try read lock first
-    m.mu.RLock()
-    cache, exists := m.caches[epoch]
-    m.mu.RUnlock()
+	// Input = headerHash + nonce (standard RandomX input format)
+	input := make([]byte, len(headerHash)+len(nonce))
+	copy(input, headerHash)
+	copy(input[len(headerHash):], nonce)
 
-    if exists {
-        cache.updateLastUsed()
-        return cache, nil
-    }
+	output := make([]byte, 32)
 
-    // Slow path: create new cache with write lock
-    m.mu.Lock()
-    defer m.mu.Unlock()
+	vm := NewVM(RANDOMX_FLAG_FULL_MEM| RANDOMX_FLAG_JIT, c, nil)
+	if vm == nil {
+		return nil, ErrFailedToCreateCache
+	}
+	defer vm.Close()
 
-    // Double check after acquiring write lock
-    if cache, exists = m.caches[epoch]; exists {
-        cache.updateLastUsed()
-        return cache, nil
-    }
-
-    log.Printf("Creating RandomX cache for epoch %d, seed hash: %x", epoch, seedHash[:8])
-    startTime := time.Now()
-
-    // Use default flags
-    flags := RandomXFlagDefault
-    
-    // Allocate cache
-    cCache := C.randomx_alloc_cache(flags)
-    if cCache == nil {
-        return nil, fmt.Errorf("failed to allocate RandomX cache for epoch %d", epoch)
-    }
-
-    // Initialize cache with seed hash
-    seedPtr := unsafe.Pointer(&seedHash[0])
-    C.randomx_init_cache(cCache, seedPtr, C.size_t(len(seedHash)))
-
-    // Create VM with the cache
-    cVm := C.randomx_create_vm(flags, cCache, nil)
-    if cVm == nil {
-        C.randomx_release_cache(cCache)
-        return nil, fmt.Errorf("failed to create RandomX VM for epoch %d", epoch)
-    }
-
-    cache = &RandomXCache{
-        cache:     cCache,
-        vm:        cVm,
-        epoch:     epoch,
-        createdAt: startTime,
-        lastUsed:  time.Now(),
-    }
-    m.caches[epoch] = cache
-
-    log.Printf("RandomX cache created successfully for epoch %d in %v", epoch, time.Since(startTime))
-
-    // Clean old caches (keep last 3 epochs)
-    m.cleanOldCaches(epoch)
-
-    return cache, nil
+	vm.CalculateHash(input, output)
+	return output, nil
 }
 
-func (m *RandomXManager) cleanOldCaches(currentEpoch uint64) {
-    for epoch, cache := range m.caches {
-        // Keep current epoch and 2 previous epochs
-        if epoch+3 < currentEpoch {
-            log.Printf("Cleaning old RandomX cache for epoch %d", epoch)
-            cache.Close()
-            delete(m.caches, epoch)
-        }
-    }
+func (c *Cache) Close() {
+	if c != nil && c.ptr != nil {
+		C.randomx_release_cache(c.ptr)
+		c.ptr = nil
+	}
 }
 
-func (m *RandomXManager) Close() {
-    m.mu.Lock()
-    defer m.mu.Unlock()
-
-    for epoch, cache := range m.caches {
-        log.Printf("Closing RandomX cache for epoch %d", epoch)
-        cache.Close()
-        delete(m.caches, epoch)
-    }
+// Dataset (kept for completeness, though not heavily used in proxy)
+type Dataset struct {
+	ptr *C.randomx_dataset
 }
 
-func (c *RandomXCache) updateLastUsed() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.lastUsed = time.Now()
-}
-func (c *RandomXCache) ComputeHash(seedHash, nonce []byte) ([]byte, error) {
-    if len(seedHash) != 32 {
-        return nil, fmt.Errorf("invalid seed hash length: %d, expected 32", len(seedHash))
-    }
-    if len(nonce) != 8 {
-        return nil, fmt.Errorf("invalid nonce length: %d, expected 8", len(nonce))
-    }
-
-    c.mu.RLock()
-    defer c.mu.RUnlock()
-
-    if c.vm == nil {
-        return nil, fmt.Errorf("RandomX VM is nil for epoch %d", c.epoch)
-    }
-
-    // Input: 32 bytes seedHash + 8 bytes nonce = 40 bytes (matching daemon)
-    input := make([]byte, 40)
-    copy(input[:32], seedHash)
-    
-    // Nonce in big-endian order to match daemon header.Nonce[:] bytes.
-    copy(input[32:40], nonce[:8])
-
-    output := make([]byte, 32)
-    C.randomx_calculate_hash(c.vm, unsafe.Pointer(&input[0]), C.size_t(len(input)), unsafe.Pointer(&output[0]))
-
-    return output, nil
+func NewDataset(flags int) *Dataset {
+	d := C.randomx_alloc_dataset(C.randomx_flags(flags))
+	if d == nil {
+		return nil
+	}
+	return &Dataset{ptr: d}
 }
 
-// ComputeHashWithSemaphore uses the manager's semaphore to limit concurrency
-func (m *RandomXManager) ComputeHashWithSemaphore(cache *RandomXCache, headerHash, nonce []byte) ([]byte, error) {
-    // Acquire semaphore slot
-    select {
-    case m.semaphore <- struct{}{}:
-        defer func() { <-m.semaphore }()
-    default:
-        // If semaphore is full, wait (will block)
-        m.semaphore <- struct{}{}
-        defer func() { <-m.semaphore }()
-    }
-
-    return cache.ComputeHash(headerHash, nonce)
+func (d *Dataset) InitDataset(cache *Cache, start, count uint32) {
+	if d == nil || d.ptr == nil || cache == nil || cache.ptr == nil {
+		return
+	}
+	C.randomx_init_dataset(d.ptr, cache.ptr, C.uint32_t(start), C.uint32_t(count))
 }
 
-func (c *RandomXCache) Close() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    
-    if c.vm != nil {
-        C.randomx_destroy_vm(c.vm)
-        c.vm = nil
-    }
-    if c.cache != nil {
-        C.randomx_release_cache(c.cache)
-        c.cache = nil
-    }
+func (d *Dataset) Close() {
+	if d != nil && d.ptr != nil {
+		C.randomx_release_dataset(d.ptr)
+		d.ptr = nil
+	}
 }
 
-// GetCacheInfo returns information about the cache for debugging
-func (c *RandomXCache) GetCacheInfo() map[string]interface{} {
-    c.mu.RLock()
-    defer c.mu.RUnlock()
-    
-    return map[string]interface{}{
-        "epoch":      c.epoch,
-        "created_at": c.createdAt,
-        "last_used":  c.lastUsed,
-        "has_vm":     c.vm != nil,
-        "has_cache":  c.cache != nil,
-    }
+// VM
+type VM struct {
+	ptr *C.randomx_vm
 }
 
-// GetManagerInfo returns information about the manager for debugging
-func (m *RandomXManager) GetManagerInfo() map[string]interface{} {
-    m.mu.RLock()
-    defer m.mu.RUnlock()
-    
-    caches := make([]uint64, 0, len(m.caches))
-    for epoch := range m.caches {
-        caches = append(caches, epoch)
-    }
-    
-    return map[string]interface{}{
-        "total_caches":   len(m.caches),
-        "epochs":         caches,
-        "semaphore_cap":  cap(m.semaphore),
-        "semaphore_len":  len(m.semaphore),
-    }
+func NewVM(flags int, cache *Cache, dataset *Dataset) *VM {
+	var cCache *C.randomx_cache
+	var cDataset *C.randomx_dataset
+	if cache != nil {
+		cCache = cache.ptr
+	}
+	if dataset != nil {
+		cDataset = dataset.ptr
+	}
+
+	vm := C.randomx_create_vm(C.randomx_flags(flags), cCache, cDataset)
+	if vm == nil {
+		return nil
+	}
+	return &VM{ptr: vm}
+}
+
+func (vm *VM) CalculateHash(input, output []byte) {
+	if vm == nil || vm.ptr == nil || len(output) == 0 {
+		return
+	}
+	var inputPtr unsafe.Pointer
+	if len(input) > 0 {
+		inputPtr = unsafe.Pointer(&input[0])
+	}
+	C.randomx_calculate_hash(vm.ptr, inputPtr, C.size_t(len(input)), unsafe.Pointer(&output[0]))
+}
+
+func (vm *VM) Close() {
+	if vm != nil && vm.ptr != nil {
+		C.randomx_destroy_vm(vm.ptr)
+		vm.ptr = nil
+	}
 }

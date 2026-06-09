@@ -1,4 +1,5 @@
-//go:build randomx && cgo
+//go:build cgo && randomx
+// +build cgo,randomx
 
 package randomx
 
@@ -9,38 +10,95 @@ package randomx
 #include "randomx.h"
 */
 import "C"
-import "unsafe"
 
-const FlagFullMem = int(C.RANDOMX_FLAG_FULL_MEM)
+import (
+    "unsafe"
+)
 
+// Flags
+const (
+    RANDOMX_FLAG_DEFAULT     = 0
+    RANDOMX_FLAG_FULL_MEM    = 1
+    RANDOMX_FLAG_JIT         = 2
+    RANDOMX_FLAG_HARD_AES    = 4
+    RANDOMX_FLAG_LARGE_PAGES = 8
+    RANDOMX_FLAG_SECURE      = 16
+)
+
+// Cache
 type Cache struct {
     ptr *C.randomx_cache
 }
 
+func NewCache(flags int) *Cache {
+    c := C.randomx_alloc_cache(C.randomx_flags(flags))
+    if c == nil {
+        return nil
+    }
+    return &Cache{ptr: c}
+}
+
+func (c *Cache) Init(seed []byte) {
+    if c == nil || c.ptr == nil {
+        return
+    }
+    var seedPtr unsafe.Pointer
+    if len(seed) > 0 {
+        seedPtr = unsafe.Pointer(&seed[0])
+    }
+    C.randomx_init_cache(c.ptr, seedPtr, C.size_t(len(seed)))
+}
+
+func (c *Cache) Close() {
+    if c != nil && c.ptr != nil {
+        C.randomx_release_cache(c.ptr)
+        c.ptr = nil
+    }
+}
+
+// Dataset
+type Dataset struct {
+    ptr *C.randomx_dataset
+}
+
+func NewDataset(flags int) *Dataset {
+    d := C.randomx_alloc_dataset(C.randomx_flags(flags))
+    if d == nil {
+        return nil
+    }
+    return &Dataset{ptr: d}
+}
+
+func (d *Dataset) InitDataset(cache *Cache, start, count uint32) {
+    if d == nil || d.ptr == nil || cache == nil || cache.ptr == nil {
+        return
+    }
+    C.randomx_init_dataset(d.ptr, cache.ptr, C.uint32_t(start), C.uint32_t(count))
+}
+
+func (d *Dataset) Close() {
+    if d != nil && d.ptr != nil {
+        C.randomx_release_dataset(d.ptr)
+        d.ptr = nil
+    }
+}
+
+// VM
 type VM struct {
     ptr *C.randomx_vm
 }
 
-func NewCache(key []byte) *Cache {
-    cache := C.randomx_alloc_cache(C.RANDOMX_FLAG_DEFAULT)
-    if cache == nil {
-        return nil
+func NewVM(flags int, cache *Cache, dataset *Dataset) *VM {
+    var cCache *C.randomx_cache
+    var cDataset *C.randomx_dataset
+    if cache != nil {
+        cCache = cache.ptr
+    }
+    if dataset != nil {
+        cDataset = dataset.ptr
     }
 
-    var keyPtr unsafe.Pointer
-    if len(key) > 0 {
-        keyPtr = unsafe.Pointer(&key[0])
-    }
-    C.randomx_init_cache(cache, keyPtr, C.size_t(len(key)))
-    return &Cache{ptr: cache}
-}
-
-func NewVM(cache *Cache, _ interface{}, flags int) *VM {
-    if cache == nil || cache.ptr == nil {
-        return nil
-    }
-
-    vm := C.randomx_create_vm(C.randomx_flags(flags), cache.ptr, nil)
+    vm := C.randomx_create_vm(C.randomx_flags(flags), cCache, cDataset)
     if vm == nil {
         return nil
     }
@@ -51,7 +109,6 @@ func (vm *VM) CalculateHash(input, output []byte) {
     if vm == nil || vm.ptr == nil || len(output) == 0 {
         return
     }
-
     var inputPtr unsafe.Pointer
     if len(input) > 0 {
         inputPtr = unsafe.Pointer(&input[0])
@@ -60,19 +117,8 @@ func (vm *VM) CalculateHash(input, output []byte) {
 }
 
 func (vm *VM) Close() {
-    if vm == nil || vm.ptr == nil {
-        return
+    if vm != nil && vm.ptr != nil {
+        C.randomx_destroy_vm(vm.ptr)
+        vm.ptr = nil
     }
-
-    C.randomx_destroy_vm(vm.ptr)
-    vm.ptr = nil
-}
-
-func (cache *Cache) Close() {
-    if cache == nil || cache.ptr == nil {
-        return
-    }
-
-    C.randomx_release_cache(cache.ptr)
-    cache.ptr = nil
 }
