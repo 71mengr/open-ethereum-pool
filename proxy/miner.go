@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-var maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
+var (
+	maxUint256       = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
+	maxRandomXTarget = new(big.Int).Sub(new(big.Int).Set(maxUint256), big.NewInt(1))
+)
 
 func randomXHashDifficulty(hash []byte) *big.Int {
 	if len(hash) == 0 {
@@ -26,9 +29,15 @@ func randomXStratumTarget(diff int64) string {
 	if diff <= 0 {
 		diff = 1000
 	}
-	target := new(big.Int).Div(maxUint256, big.NewInt(diff))
-	// XMRig expects 4-byte little-endian target (most common)
-	targetBytes := target.FillBytes(make([]byte, 8))
+
+	// XMRig accepts the compact 4-byte RandomX stratum target in
+	// little-endian form.  Derive it from the most significant 32 bits of the
+	// full 256-bit target so small CPU-friendly difficulties still map to a
+	// useful target.  FillBytes must receive the full 32-byte buffer; otherwise
+	// low difficulties produce a 256-bit value that panics with
+	// "math/big: buffer too small to fit value".
+	target := new(big.Int).Div(maxRandomXTarget, big.NewInt(diff))
+	targetBytes := target.FillBytes(make([]byte, 32))
 	return hex.EncodeToString(reverseBytes(targetBytes[:4]))
 }
 

@@ -82,3 +82,19 @@ func TestRandomXHashMeetsTargetUsesExactTarget(t *testing.T) {
 		t.Fatalf("expected hash above target not to be a block candidate")
 	}
 }
+
+func TestRandomXStratumTargetUsesCompactLittleEndianTarget(t *testing.T) {
+	got := randomXStratumTarget(1000)
+	want := "37894100"
+	if got != want {
+		t.Fatalf("expected compact little-endian target %s, got %s", want, got)
+	}
+}
+
+func TestRandomXStratumTargetDoesNotPanicForLowDifficulty(t *testing.T) {
+	got := randomXStratumTarget(1)
+	want := "ffffffff"
+	if got != want {
+		t.Fatalf("expected maximum compact target %s, got %s", want, got)
+	}
+}
