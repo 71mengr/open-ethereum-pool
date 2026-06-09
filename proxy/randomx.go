@@ -96,7 +96,7 @@ func (d *Dataset) InitDataset(cache *Cache, start, count uint32) {
 	if d == nil || d.ptr == nil || cache == nil || cache.ptr == nil {
 		return
 	}
-	C.randomx_init_dataset(d.ptr, cache.ptr, C.uint32_t(start), C.uint32_t(count))
+	C.randomx_init_dataset(d.ptr, cache.ptr, C.ulong(start), C.ulong(count))
 }
 
 func (d *Dataset) Close() {
