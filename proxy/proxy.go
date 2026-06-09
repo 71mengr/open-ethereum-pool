@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -20,15 +19,15 @@ import (
 )
 
 type ProxyServer struct {
-	config *Config
-	blockTemplate atomic.Value
-	upstream      int32
-	upstreams     []*rpc.RPCClient
-	backend       *storage.RedisClient
-	diff          string
-	policy        *policy.PolicyServer
+	config             *Config
+	blockTemplate      atomic.Value
+	upstream           int32
+	upstreams          []*rpc.RPCClient
+	backend            *storage.RedisClient
+	diff               string
+	policy             *policy.PolicyServer
 	hashrateExpiration time.Duration
-	failsCount    int64
+	failsCount         int64
 
 	// RandomX
 	randomxManager *RandomXManager
@@ -122,62 +121,6 @@ func (s *ProxyServer) startBackgroundJobs() {
 	}
 }
 
-func (s *ProxyServer) GetPoolShareDifficulty() int64 {
-	if s.config.Proxy.RandomX.Enabled && s.config.Proxy.RandomX.ShareDifficulty > 0 {
-		return s.config.Proxy.RandomX.ShareDifficulty
-	}
-	return s.config.Proxy.Difficulty
-}
-
-func (s *ProxyServer) updateShareTarget() {
-	s.diff = randomXStratumTarget(s.GetPoolShareDifficulty())
-}
-
-func (s *ProxyServer) fetchBlockTemplate() {
-	if s.isSick() {
-		return
-	}
-	rpcClient := s.rpc()
-	reply, err := rpcClient.GetWork()
-	if err != nil {
-		log.Printf("GetWork failed from %s: %v", rpcClient.Name, err)
-		s.markSick()
-		return
-	}
-	if len(reply) < 3 {
-		log.Printf("Invalid GetWork reply")
-		return
-	}
-
-	height := uint64(0)
-	if len(reply) > 3 {
-		height, _ = util.HexToUint64(reply[3])
-	}
-
-	t := &BlockTemplate{
-		Header:     reply[0],
-		Seed:       reply[1],
-		Target:     reply[2],
-		Height:     height,
-		Difficulty: s.targetToDifficulty(reply[2]),
-	}
-
-	s.blockTemplate.Store(t)
-	log.Printf("New block template | Height: %d | Seed: %s...", height, shortHex(reply[1], 16))
-}
-
-func (s *ProxyServer) targetToDifficulty(targetHex string) *big.Int {
-	target := hexToBytes(targetHex)
-	if len(target) == 0 {
-		return big.NewInt(0)
-	}
-	tBig := new(big.Int).SetBytes(reverseBytes(target))
-	if tBig.Sign() == 0 {
-		return big.NewInt(0)
-	}
-	return new(big.Int).Div(maxUint256, tBig)
-}
-
 func (s *ProxyServer) currentBlockTemplate() *BlockTemplate {
 	if t := s.blockTemplate.Load(); t != nil {
 		return t.(*BlockTemplate)
@@ -201,6 +144,21 @@ func (s *ProxyServer) checkUpstreams() {
 		log.Printf("Switching upstream to %s", s.upstreams[candidate].Name)
 		atomic.StoreInt32(&s.upstream, candidate)
 	}
+}
+
+func (s *ProxyServer) Start() {
+	r := mux.NewRouter()
+	r.Handle("/{login}", s)
+	r.Handle("/{login}/{id}", s)
+
+	server := &http.Server{
+		Addr:           s.config.Proxy.Listen,
+		Handler:        r,
+		MaxHeaderBytes: s.config.Proxy.LimitHeadersSize,
+	}
+
+	log.Printf("Starting proxy on %v", s.config.Proxy.Listen)
+	log.Fatal(server.ListenAndServe())
 }
 
 func (s *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -268,7 +226,7 @@ func (cs *Session) handleMessage(s *ProxyServer, r *http.Request, req *JSONRpcRe
 
 	switch req.Method {
 	case "eth_getWork":
-		reply, errReply := s.handleGetWorkRPC(s)
+		reply, errReply := s.handleGetWorkRPC(cs)
 		if errReply != nil {
 			cs.sendError(req.Id, errReply)
 		} else {
@@ -288,35 +246,6 @@ func (cs *Session) handleMessage(s *ProxyServer, r *http.Request, req *JSONRpcRe
 	default:
 		cs.sendError(req.Id, s.handleUnknownRPC(cs, req.Method))
 	}
-}
-
-func (s *ProxyServer) handleSubmitRPC(cs *Session, login, workerID string, params []string) (interface{}, *ErrorReply) {
-	t := s.currentBlockTemplate()
-	if t == nil {
-		return false, &ErrorReply{Code: -1, Message: "No work available"}
-	}
-
-	validShare, blockFound := s.processShare(login, workerID, cs.ip, t, params)
-	if validShare {
-		return true, nil
-	}
-	return false, &ErrorReply{Code: 21, Message: "Low difficulty share"}
-}
-
-func (s *ProxyServer) handleGetWorkRPC(cs *Session) (interface{}, *ErrorReply) {
-	t := s.currentBlockTemplate()
-	if t == nil {
-		return nil, &ErrorReply{Code: -1, Message: "No work available"}
-	}
-	header := strings.TrimPrefix(t.Header, "0x")
-	seed := strings.TrimPrefix(t.Seed, "0x")
-	target := s.diff
-	return []string{"0x" + header, "0x" + seed, "0x" + target}, nil
-}
-
-func (s *ProxyServer) handleUnknownRPC(cs *Session, method string) *ErrorReply {
-	log.Printf("Unknown method %s from %s", method, cs.ip)
-	return &ErrorReply{Code: -3, Message: "Method not found"}
 }
 
 func (s *ProxyServer) markSick() {

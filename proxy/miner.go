@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"log"
 	"math/big"
@@ -31,6 +30,27 @@ func randomXStratumTarget(diff int64) string {
 	// XMRig expects 4-byte little-endian target (most common)
 	targetBytes := target.FillBytes(make([]byte, 8))
 	return hex.EncodeToString(reverseBytes(targetBytes[:4]))
+}
+
+func targetHexToDiff(targetHex string) *big.Int {
+	target := hexToBytes(targetHex)
+	if len(target) == 0 {
+		return big.NewInt(0)
+	}
+	targetBig := new(big.Int).SetBytes(target)
+	if targetBig.Sign() == 0 {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Div(maxUint256, targetBig)
+}
+
+func nonceBytesToHex(nonce []byte) string {
+	nonce8 := make([]byte, 8)
+	if len(nonce) > len(nonce8) {
+		nonce = nonce[len(nonce)-len(nonce8):]
+	}
+	copy(nonce8[len(nonce8)-len(nonce):], nonce)
+	return "0x" + hex.EncodeToString(nonce8)
 }
 
 func randomXHashMeetsTarget(hash []byte, targetHex string) bool {
@@ -131,7 +151,7 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
 	}
 
 	// Prepare verified params
-	verifiedNonceHex := "0x" + hex.EncodeToString(verifiedNonce)
+	verifiedNonceHex := nonceBytesToHex(verifiedNonce)
 	verifiedMixHex := "0x" + hex.EncodeToString(verifiedHash)
 	hashDiff := randomXHashDifficulty(verifiedHash)
 
@@ -152,14 +172,14 @@ func (s *ProxyServer) processRandomXShare(login, id, ip string, t *BlockTemplate
 			log.Printf("BLOCK FOUND AND ACCEPTED!")
 			go s.fetchBlockTemplate()
 			// Write block to backend...
-			exist, _ := s.backend.WriteBlock(login, id, []string{verifiedNonceHex, "0x"+hex.EncodeToString(headerHash), verifiedMixHex},
+			exist, _ := s.backend.WriteBlock(login, id, []string{verifiedNonceHex, "0x" + hex.EncodeToString(headerHash), verifiedMixHex},
 				hashDiff.Int64(), t.Difficulty.Int64(), t.Height, s.hashrateExpiration)
 			return exist, true
 		}
 	}
 
 	// Regular share
-	exist, err := s.backend.WriteShare(login, id, []string{verifiedNonceHex, "0x"+hex.EncodeToString(headerHash), verifiedMixHex},
+	exist, err := s.backend.WriteShare(login, id, []string{verifiedNonceHex, "0x" + hex.EncodeToString(headerHash), verifiedMixHex},
 		hashDiff.Int64(), t.Height, s.hashrateExpiration)
 	if err != nil {
 		log.Printf("WriteShare error: %v", err)

@@ -36,3 +36,14 @@ type ErrorReply struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
+
+func (e *ErrorReply) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func NewStratumError(code int, message string) *ErrorReply {
+	return &ErrorReply{Code: code, Message: message}
+}
