@@ -179,6 +179,7 @@ func (s *ProxyServer) updateBlockTemplate() {
 	s.currentTemplate.SealHash = remove0x(work[0])
 	s.currentTemplate.SeedHash = remove0x(work[1])
 	s.currentTemplate.Target = work[2]
+	s.currentTemplate.Difficulty = util.TargetHexToDiff(work[2])
 	
 	log.Printf("�� Updated block template - height=%d, seal=%s..., seed=%s...",
 		height, s.currentTemplate.SealHash[:16], s.currentTemplate.SeedHash[:16])
@@ -410,7 +411,7 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 		log.Printf("✅ Seal hash matches for %s", cs.ip)
 
 		// Process the share
-		exist, valid := s.processTKMShare(cs.login, cs.ip, t, nonceHex, sealHashHex, mixDigestHex)
+		exist, valid := s.processTKMShare(cs.login, "0", cs.ip, t, nonceHex, sealHashHex, mixDigestHex)
 
 		if exist {
 			log.Printf("⚠️ Duplicate share from %s", cs.ip)
@@ -438,8 +439,8 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 	}
 }
 
-// processTKMShare handles TKM RandomX share verification
-func (s *ProxyServer) processTKMShare(login, ip string, t *BlockTemplate, nonceHex, sealHashHex, mixDigestHex string) (bool, bool) {
+// processTKMShare handles TKM RandomX share verification and records accepted work.
+func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, nonceHex, sealHashHex, mixDigestHex string) (bool, bool) {
 	// Remove 0x prefixes
 	sealHashHex = remove0x(sealHashHex)
 	mixDigestHex = remove0x(mixDigestHex)
@@ -480,10 +481,59 @@ func (s *ProxyServer) processTKMShare(login, ip string, t *BlockTemplate, nonceH
 		return false, false
 	}
 	
-	log.Printf("✅ Share accepted - nonce=%s, hash=%x..., diff=%d", 
-		nonceHex, submittedMix[:8], poolDiff)
-	
-	return false, true
+	shareDiff := big.NewInt(0)
+	if hashBig.Sign() > 0 {
+		shareDiff.Div(maxUint256, hashBig)
+	}
+	if shareDiff.Sign() == 0 {
+		shareDiff.SetInt64(poolDiff)
+	}
+
+	log.Printf("✅ Share accepted - nonce=%s, hash=%x..., diff=%s",
+		nonceHex, submittedMix[:8], shareDiff.String())
+
+	params := []string{add0x(nonceHex), add0x(sealHashHex), add0x(mixDigestHex)}
+	isBlock := false
+	if t.Target != "" {
+		targetBytes, err := hex.DecodeString(remove0x(t.Target))
+		if err == nil && len(targetBytes) > 0 {
+			isBlock = hashBig.Cmp(new(big.Int).SetBytes(targetBytes)) <= 0
+		}
+	}
+	if !isBlock && t.Difficulty != nil && t.Difficulty.Sign() > 0 {
+		isBlock = shareDiff.Cmp(t.Difficulty) >= 0
+	}
+
+	roundDiff := poolDiff
+	if t.Difficulty != nil && t.Difficulty.Sign() > 0 {
+		roundDiff = t.Difficulty.Int64()
+	}
+
+	if isBlock {
+		log.Printf("�� Block candidate detected! Submitting to daemon...")
+		ok, err := s.rpc().SubmitBlock(params)
+		if err != nil {
+			log.Printf("Block submission error: %v", err)
+		} else if !ok {
+			log.Printf("Block rejected by daemon, accepting as share")
+		} else {
+			log.Printf("✅ BLOCK FOUND AND ACCEPTED! Height: %d", t.Height)
+			go s.fetchBlockTemplate()
+			exist, err := s.backend.WriteBlock(login, id, params, shareDiff.Int64(), roundDiff, t.Height, s.hashrateExpiration)
+			if err != nil {
+				log.Printf("Failed to insert block candidate into backend: %v", err)
+				return false, false
+			}
+			return exist, true
+		}
+	}
+
+	exist, err := s.backend.WriteShare(login, id, params, shareDiff.Int64(), t.Height, s.hashrateExpiration)
+	if err != nil {
+		log.Printf("Failed to insert share data into backend: %v", err)
+		return false, false
+	}
+	return exist, true
 }
 
 // getSeedHashFromDaemon gets the seed hash for a specific block height
@@ -636,6 +686,12 @@ func (s *ProxyServer) removeSession(cs *Session) {
 }
 
 func (s *ProxyServer) GetPoolShareDifficulty() int64 {
+	if s.config.Proxy.RandomX.Enabled {
+		if s.config.Proxy.RandomX.ShareDifficulty > 0 {
+			return s.config.Proxy.RandomX.ShareDifficulty
+		}
+		return DefaultRandomXShareDifficulty
+	}
 	if s.config.Proxy.Difficulty > 0 {
 		return s.config.Proxy.Difficulty
 	}
