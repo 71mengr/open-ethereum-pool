@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math/big"
 	"os"
 	"reflect"
 	"strconv"
@@ -326,4 +327,65 @@ func reset() {
 	for _, k := range keys {
 		r.client.Del(k)
 	}
+}
+
+func TestBlockFinderCountedAfterImmatureAndRemovedOnOrphan(t *testing.T) {
+	reset()
+
+	block := &BlockData{
+		Height:      100,
+		RoundHeight: 100,
+		Nonce:       "0x1",
+		Hash:        "0xabc",
+		Reward:      bigZero(),
+		Finder:      "miner1",
+	}
+
+	if err := r.WriteImmatureBlock(block, nil); err != nil {
+		t.Fatal(err)
+	}
+	blocksFound := r.client.HGet(r.formatKey("miners", "miner1"), "blocksFound").Val()
+	if blocksFound != "1" {
+		t.Fatalf("expected blocksFound to be 1 after immature block, got %q", blocksFound)
+	}
+
+	immature := convertBlockResults(r.client.ZRangeWithScores(r.formatKey("blocks", "immature"), 0, -1))
+	if len(immature) != 1 || immature[0].Finder != "miner1" {
+		t.Fatalf("expected finder to be preserved on immature block, got %#v", immature)
+	}
+
+	immature[0].Orphan = true
+	immature[0].Reward = bigZero()
+	if err := r.WriteOrphan(immature[0]); err != nil {
+		t.Fatal(err)
+	}
+	blocksFound = r.client.HGet(r.formatKey("miners", "miner1"), "blocksFound").Val()
+	if blocksFound != "0" {
+		t.Fatalf("expected blocksFound to be 0 after orphan, got %q", blocksFound)
+	}
+}
+
+func TestCandidateFinderBackwardCompatible(t *testing.T) {
+	reset()
+
+	r.client.ZAdd(r.formatKey("blocks", "candidates"), redis.Z{Score: 100, Member: "0x1:0x2:0x3:10:20:30"})
+	r.client.ZAdd(r.formatKey("blocks", "candidates"), redis.Z{Score: 101, Member: "0x4:0x5:0x6:11:21:31:miner1"})
+
+	candidates, err := r.GetCandidates(101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(candidates))
+	}
+	if candidates[0].Finder != "" {
+		t.Fatalf("expected legacy candidate finder to be empty, got %q", candidates[0].Finder)
+	}
+	if candidates[1].Finder != "miner1" {
+		t.Fatalf("expected candidate finder to be miner1, got %q", candidates[1].Finder)
+	}
+}
+
+func bigZero() *big.Int {
+	return big.NewInt(0)
 }

@@ -24,25 +24,27 @@ const MaxReqSize = 1024
 
 // formatRandomXTarget converts difficulty to 64-character hex target for RandomX
 func formatRandomXTarget(diff int64) string {
-	if diff <= 0 {
+/*	if diff <= 0 {
 		diff = 1000
 	}
-	
+
 	// 2^256 - 1
 	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
-	
+
 	// target = maxUint256 / difficulty
 	target := new(big.Int).Div(maxUint256, big.NewInt(diff))
-	
+
 	// Format as 64-character hex (32 bytes) without 0x prefix
 	hexStr := fmt.Sprintf("%064x", target)
-	
+
 	// Ensure length is exactly 64
 	if len(hexStr) != 64 {
 		hexStr = fmt.Sprintf("%064s", hexStr)
 	}
-	
+
 	return "0x" + hexStr
+*/
+	return randomXStratumTarget(diff)
 }
 
 // remove0x removes 0x prefix if present
@@ -61,12 +63,12 @@ func add0x(s string) string {
 // littleEndianNonce converts a hex nonce string (big-endian from XMRig) to little-endian bytes
 func littleEndianNonce(nonceHex string) ([]byte, error) {
 	nonceHex = remove0x(nonceHex)
-	
+
 	nonceBytes, err := hex.DecodeString(nonceHex)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Ensure 8 bytes
 	if len(nonceBytes) != 8 {
 		padded := make([]byte, 8)
@@ -77,7 +79,7 @@ func littleEndianNonce(nonceHex string) ([]byte, error) {
 		}
 		nonceBytes = padded
 	}
-	
+
 	// Convert from big-endian to little-endian
 	nonceLE := make([]byte, 8)
 	nonceLE[0] = nonceBytes[7]
@@ -88,39 +90,39 @@ func littleEndianNonce(nonceHex string) ([]byte, error) {
 	nonceLE[5] = nonceBytes[2]
 	nonceLE[6] = nonceBytes[1]
 	nonceLE[7] = nonceBytes[0]
-	
+
 	return nonceLE, nil
 }
 
 // getWorkFromDaemon calls go-ethereum's eth_getWork RPC
 func (s *ProxyServer) getWorkFromDaemon() ([]string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	
+
 	rpcReq := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "eth_getWork",
 		"params":  []interface{}{},
 		"id":      1,
 	}
-	
+
 	reqBody, err := json.Marshal(rpcReq)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var daemonUrl string
 	if len(s.config.Upstream) > 0 && s.config.Upstream[0].Url != "" {
 		daemonUrl = s.config.Upstream[0].Url
 	} else {
 		daemonUrl = "http://localhost:8545"
 	}
-	
+
 	resp, err := client.Post(daemonUrl, "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("daemon connection failed: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	var result struct {
 		Result []string `json:"result"`
 		Error  *struct {
@@ -128,19 +130,19 @@ func (s *ProxyServer) getWorkFromDaemon() ([]string, error) {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode daemon response: %v", err)
 	}
-	
+
 	if result.Error != nil {
 		return nil, fmt.Errorf("daemon error: %s", result.Error.Message)
 	}
-	
+
 	if len(result.Result) < 3 {
 		return nil, fmt.Errorf("invalid work response from daemon")
 	}
-	
+
 	return result.Result, nil
 }
 
@@ -151,52 +153,96 @@ func (s *ProxyServer) updateBlockTemplate() {
 		log.Printf("⚠️ Failed to get work from daemon: %v", err)
 		return
 	}
-	
+
 	if len(work) < 4 {
 		log.Printf("⚠️ Invalid work response from daemon: %+v", work)
 		return
 	}
-	
+
 	// work[0] = seal hash (what miners hash)
 	// work[1] = seed hash (for RandomX)
 	// work[2] = target
 	// work[3] = block number (hex)
-	
+
 	height, err := strconv.ParseUint(remove0x(work[3]), 16, 64)
 	if err != nil {
 		log.Printf("⚠️ Failed to parse height: %v", err)
 		return
 	}
-	
+
+	sealHash := remove0x(work[0])
+	seedHash := remove0x(work[1])
+	newTemplate := &BlockTemplate{
+		Header:     add0x(sealHash),
+		Seed:       add0x(seedHash),
+		SealHash:   sealHash,
+		SeedHash:   seedHash,
+		Target:     work[2],
+		Difficulty: util.TargetHexToDiff(work[2]),
+		Height:     height,
+	}
+
 	s.templateMu.Lock()
 	defer s.templateMu.Unlock()
-	
-	if s.currentTemplate == nil {
-		s.currentTemplate = &BlockTemplate{}
+	s.currentTemplate = newTemplate
+	if s.sealTemplates == nil {
+		s.sealTemplates = make(map[string]*BlockTemplate)
 	}
-	
-	s.currentTemplate.Height = height
-	s.currentTemplate.SealHash = remove0x(work[0])
-	s.currentTemplate.SeedHash = remove0x(work[1])
-	s.currentTemplate.Target = work[2]
-	s.currentTemplate.Difficulty = util.TargetHexToDiff(work[2])
-	
-	log.Printf("�� Updated block template - height=%d, seal=%s..., seed=%s...",
-		height, s.currentTemplate.SealHash[:16], s.currentTemplate.SeedHash[:16])
+	if _, ok := s.sealTemplates[sealHash]; !ok {
+		s.sealOrder = append(s.sealOrder, sealHash)
+	}
+	s.sealTemplates[sealHash] = newTemplate
+	for len(s.sealOrder) > 8 {
+		oldest := s.sealOrder[0]
+		s.sealOrder = s.sealOrder[1:]
+		delete(s.sealTemplates, oldest)
+	}
+
+	log.Printf("✅ Updated block template - height=%d, seal=%s..., seed=%s...",
+		height, shortHex(sealHash, 16), shortHex(seedHash, 16))
 }
 
-// currentBlockTemplate returns the current mining template
+// currentBlockTemplate returns the current mining template.
 func (s *ProxyServer) currentBlockTemplate() *BlockTemplate {
 	s.templateMu.RLock()
+	current := s.currentTemplate
+	s.templateMu.RUnlock()
+	if current != nil {
+		return current
+	}
+	if t := s.blockTemplate.Load(); t != nil {
+		template := t.(*BlockTemplate)
+		if template.SealHash == "" {
+			template.SealHash = remove0x(template.Header)
+		}
+		if template.SeedHash == "" {
+			template.SeedHash = remove0x(template.Seed)
+		}
+		return template
+	}
+	return nil
+}
+
+func (s *ProxyServer) blockTemplateForSeal(sealHash string) *BlockTemplate {
+	sealHash = remove0x(sealHash)
+	s.templateMu.RLock()
 	defer s.templateMu.RUnlock()
-	return s.currentTemplate
+	if s.currentTemplate != nil && remove0x(s.currentTemplate.SealHash) == sealHash {
+		return s.currentTemplate
+	}
+	if s.sealTemplates != nil {
+		if template := s.sealTemplates[sealHash]; template != nil {
+			return template
+		}
+	}
+	return nil
 }
 
 // startTemplateUpdater periodically fetches new templates from daemon
 func (s *ProxyServer) startTemplateUpdater() {
 	// Update immediately
 	s.updateBlockTemplate()
-	
+
 	// Then update every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
 	go func() {
@@ -316,7 +362,7 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 
 		// Make sure we have a template
 		s.updateBlockTemplate()
-		
+
 		t := s.currentBlockTemplate()
 		if t != nil && len(t.SealHash) > 0 {
 			poolDiff := s.GetPoolShareDifficulty()
@@ -324,7 +370,7 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 				poolDiff = 1000
 			}
 			target := formatRandomXTarget(poolDiff)
-			
+
 			// For TKM, the blob is the seal hash (what miners hash)
 			jobResult := map[string]interface{}{
 				"blob":      add0x(t.SealHash),
@@ -333,20 +379,20 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 				"seed_hash": add0x(t.SeedHash),
 				"height":    t.Height,
 			}
-			
-			log.Printf("�� Initial job to %s: height=%d, seal=%s..., target=%s...", 
-				cs.ip, t.Height, t.SealHash[:16], target[2:18])
-			
+
+			log.Printf("�� Initial job to %s: height=%d, seal=%s..., target=%s...",
+				cs.ip, t.Height, t.SealHash[:16], target)
+
 			return cs.sendTCPResult(req.Id, jobResult)
 		}
-		
+
 		log.Printf("⚠️ No block template available for initial job")
 		return cs.sendTCPResult(req.Id, true)
 
 	case "eth_getWork":
 		// Update template from daemon first
 		s.updateBlockTemplate()
-		
+
 		t := s.currentBlockTemplate()
 		if t == nil || len(t.SealHash) == 0 {
 			log.Printf("⚠️ Work not ready - no template available")
@@ -358,21 +404,24 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 			poolDiff = 1000
 		}
 		target := formatRandomXTarget(poolDiff)
-		
+		if s.diff != "" {
+			target = s.diff
+		}
+
 		// Response format: [seal_hash, seed_hash, target]
 		response := []string{
 			add0x(t.SealHash),
 			add0x(t.SeedHash),
 			target,
 		}
-		
+
 		log.Printf("�� eth_getWork to %s: seal=%s..., seed=%s..., target=%s... (diff=%d)",
-			cs.ip, 
-			response[0][2:18], 
-			response[1][2:18], 
-			target[2:18],
+			cs.ip,
+			response[0][2:18],
+			response[1][2:18],
+			target,
 			poolDiff)
-		
+
 		return cs.sendTCPResult(req.Id, response)
 
 	case "eth_submitWork":
@@ -398,17 +447,19 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 			return cs.sendTCPError(req.Id, &ErrorReply{Code: -1, Message: "No template"})
 		}
 
-		// Verify seal hash matches current work
-		currentSealHash := remove0x(t.SealHash)
+		// Accept current and recently issued templates so miners are not rejected
+		// just because the pool refreshed work while a valid share was in flight.
 		submittedSealHash := remove0x(sealHashHex)
-		
-		if submittedSealHash != currentSealHash {
-			log.Printf("⚠️ Seal hash mismatch: expected %s..., got %s...", 
-				currentSealHash[:16], submittedSealHash[:16])
+		if submittedTemplate := s.blockTemplateForSeal(submittedSealHash); submittedTemplate != nil {
+			t = submittedTemplate
+		} else {
+			currentSealHash := remove0x(t.SealHash)
+			log.Printf("⚠️ Seal hash mismatch: expected %s..., got %s...",
+				shortHex(currentSealHash, 16), shortHex(submittedSealHash, 16))
 			return cs.sendTCPResult(req.Id, false)
 		}
-		
-		log.Printf("✅ Seal hash matches for %s", cs.ip)
+
+		log.Printf("✅ Seal hash accepted for %s", cs.ip)
 
 		// Process the share
 		exist, valid := s.processTKMShare(cs.login, "0", cs.ip, t, nonceHex, sealHashHex, mixDigestHex)
@@ -417,7 +468,7 @@ func (cs *Session) handleTCPMessage(s *ProxyServer, req *StratumReq) error {
 			log.Printf("⚠️ Duplicate share from %s", cs.ip)
 			return cs.sendTCPError(req.Id, &ErrorReply{Code: 22, Message: "Duplicate share"})
 		}
-		
+
 		if valid {
 			log.Printf("✅ Valid share from %s! nonce=%s", cs.ip, nonceHex)
 		} else {
@@ -444,28 +495,28 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 	// Remove 0x prefixes
 	sealHashHex = remove0x(sealHashHex)
 	mixDigestHex = remove0x(mixDigestHex)
-	
+
 	// Decode seal hash
 	sealHash, err := hex.DecodeString(sealHashHex)
 	if err != nil || len(sealHash) != 32 {
 		log.Printf("Invalid seal hash: %v", err)
 		return false, false
 	}
-	
+
 	// Convert nonce from big-endian (XMRig) to little-endian (RandomX)
 	_, err = littleEndianNonce(nonceHex)
 	if err != nil {
 		log.Printf("Invalid nonce: %v", err)
 		return false, false
 	}
-	
+
 	// Decode submitted mix digest
 	submittedMix, err := hex.DecodeString(mixDigestHex)
 	if err != nil || len(submittedMix) != 32 {
 		log.Printf("Invalid mix digest: %v", err)
 		return false, false
 	}
-	
+
 	// Check difficulty
 	hashBig := new(big.Int).SetBytes(submittedMix)
 	poolDiff := s.GetPoolShareDifficulty()
@@ -474,13 +525,13 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 	}
 	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 	targetBig := new(big.Int).Div(maxUint256, big.NewInt(poolDiff))
-	
+
 	if hashBig.Cmp(targetBig) > 0 {
-		log.Printf("⚠️ Hash difficulty too low: %s > %s", 
+		log.Printf("⚠️ Hash difficulty too low: %s > %s",
 			hashBig.String(), targetBig.String())
 		return false, false
 	}
-	
+
 	shareDiff := big.NewInt(0)
 	if hashBig.Sign() > 0 {
 		shareDiff.Div(maxUint256, hashBig)
@@ -539,16 +590,16 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 // getSeedHashFromDaemon gets the seed hash for a specific block height
 func (s *ProxyServer) getSeedHashFromDaemon(height uint64) string {
 	client := &http.Client{Timeout: 5 * time.Second}
-	
+
 	heightHex := fmt.Sprintf("0x%x", height)
-	
+
 	rpcReq := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "randomx_getSeedHash",
 		"params":  []interface{}{heightHex},
 		"id":      1,
 	}
-	
+
 	reqBody, err := json.Marshal(rpcReq)
 	if err == nil {
 		var daemonUrl string
@@ -557,18 +608,18 @@ func (s *ProxyServer) getSeedHashFromDaemon(height uint64) string {
 		} else {
 			daemonUrl = "http://localhost:8545"
 		}
-		
+
 		resp, err := client.Post(daemonUrl, "application/json", bytes.NewReader(reqBody))
 		if err == nil {
 			defer resp.Body.Close()
-			
+
 			var result struct {
 				Result string `json:"result"`
 				Error  *struct {
 					Message string `json:"message"`
 				} `json:"error"`
 			}
-			
+
 			if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
 				if result.Error == nil && result.Result != "" {
 					if !strings.HasPrefix(result.Result, "0x") {
@@ -579,12 +630,12 @@ func (s *ProxyServer) getSeedHashFromDaemon(height uint64) string {
 			}
 		}
 	}
-	
+
 	// For epoch 0, seed hash is all zeros
 	if height/2048 == 0 {
 		return "0x0000000000000000000000000000000000000000000000000000000000000000"
 	}
-	
+
 	return "0x0000000000000000000000000000000000000000000000000000000000000000"
 }
 
@@ -635,7 +686,7 @@ func (s *ProxyServer) broadcastNewJobs() {
 	if poolDiff <= 0 {
 		poolDiff = 1000
 	}
-	
+
 	target := formatRandomXTarget(poolDiff)
 
 	job := map[string]interface{}{
@@ -655,7 +706,7 @@ func (s *ProxyServer) broadcastNewJobs() {
 	}
 
 	log.Printf("�� Broadcasting new job to %d miners - height=%d, diff=%d, seal=%s..., target=%s...",
-		count, t.Height, poolDiff, t.SealHash[:16], target[2:18])
+		count, t.Height, poolDiff, t.SealHash[:16], target)
 
 	for session := range s.sessions {
 		go func(cs *Session) {

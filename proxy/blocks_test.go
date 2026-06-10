@@ -98,3 +98,19 @@ func TestRandomXStratumTargetDoesNotPanicForLowDifficulty(t *testing.T) {
 		t.Fatalf("expected maximum compact target %s, got %s", want, got)
 	}
 }
+
+func TestFormatRandomXTargetUsesCompactLittleEndianTarget(t *testing.T) {
+	got := formatRandomXTarget(1000)
+	want := randomXStratumTarget(1000)
+	if got != want {
+		t.Fatalf("expected compact little-endian target %s, got %s", want, got)
+	}
+}
+
+func TestFormatTargetUsesCompactLittleEndianTarget(t *testing.T) {
+	got := formatTarget(1000)
+	want := randomXStratumTarget(1000)
+	if got != want {
+		t.Fatalf("expected compact little-endian target %s, got %s", want, got)
+	}
+}

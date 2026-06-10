@@ -6,6 +6,7 @@
       <tr>
         <th>Height</th>
         <th>Time Found</th>
+        <th>Finder Address</th>
         <th>Variance</th>
       </tr>
     </thead>
@@ -14,6 +15,13 @@
       <tr>
         <td><a href="https://etherscan.io/block/{{block.height}}" rel="nofollow" target="_blank">{{format-number block.height}}</a></td>
         <td>{{format-date-locale block.timestamp}}</td>
+        <td>
+          {{#if block.finder}}
+            {{#link-to 'account' block.finder class='hash'}}{{block.finder}}{{/link-to}}
+          {{else}}
+            <span class="text-muted">Not recorded</span>
+          {{/if}}
+        </td>
         <td>
           {{#if block.isLucky}}
           <span class="label label-success">{{format-number block.variance style='percent'}}</span>

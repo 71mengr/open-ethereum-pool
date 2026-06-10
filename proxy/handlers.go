@@ -2,9 +2,7 @@ package proxy
 
 import (
         "encoding/json"
-        "fmt"
         "log"
-        "math/big"
         "regexp"
         "strings"
 //        "time"
@@ -18,15 +16,10 @@ var noncePattern = regexp.MustCompile("^0x[0-9a-f]{16}$")
 var hashPattern = regexp.MustCompile("^0x[0-9a-f]{64}$")
 var workerPattern = regexp.MustCompile("^[0-9a-zA-Z-_]{1,8}$")
 
-// formatTarget converts difficulty to 64-char target hex string for RandomX
+// formatTarget converts difficulty to the compact little-endian target used
+// by XMRig-compatible RandomX stratum jobs.
 func formatTarget(diff int64) string {
-        if diff <= 0 {
-                diff = 1000
-        }
-        maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
-        target := new(big.Int).Div(maxUint256, big.NewInt(diff))
-        // Return 64-character hex without 0x prefix
-        return fmt.Sprintf("%064x", target)
+        return randomXStratumTarget(diff)
 }
 
 // add0x adds 0x prefix if not present
@@ -109,7 +102,7 @@ func (s *ProxyServer) handleXMRigLogin(cs *Session, params map[string]interface{
                 "status": "OK",
         }
 
-        log.Printf("✅ XMRig login: %s@%s target=%s", login, cs.ip, target[:16])
+        log.Printf("✅ XMRig login: %s@%s target=%s", login, cs.ip, target)
         return cs.sendTCPResult(id, result)
 }
 
@@ -143,7 +136,7 @@ func (s *ProxyServer) handleJobRequest(cs *Session, id json.RawMessage) error {
         }
 
         log.Printf("�� Sending job to %s: blob=%s..., target=%s...",
-                cs.ip, remove0x(t.Header)[:16], target[:16])
+                cs.ip, remove0x(t.Header)[:16], target)
         return cs.sendTCPResult(id, job)
 }
 
@@ -313,6 +306,6 @@ func (s *ProxyServer) broadcastNewJob() {
 
         if count > 0 {
                 log.Printf("�� Broadcast new job to %d miners - height=%d, target=%s...",
-                        count, t.Height, target[:16])
+                        count, t.Height, target)
         }
 }

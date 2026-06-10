@@ -33,8 +33,10 @@ type ProxyServer struct {
 	randomxManager *RandomXManager
 	randomxMu      sync.RWMutex
 
-    templateMu     sync.RWMutex
-    currentTemplate *BlockTemplate
+	templateMu      sync.RWMutex
+	currentTemplate *BlockTemplate
+	sealTemplates   map[string]*BlockTemplate
+	sealOrder       []string
 	// Stratum
 	sessionsMu sync.RWMutex
 	sessions   map[*Session]struct{}
@@ -58,9 +60,10 @@ func NewProxy(cfg *Config, backend *storage.RedisClient) *ProxyServer {
 
 	policySrv := policy.Start(&cfg.Proxy.Policy, backend)
 	proxy := &ProxyServer{
-		config:  cfg,
-		backend: backend,
-		policy:  policySrv,
+		config:        cfg,
+		backend:       backend,
+		policy:        policySrv,
+		sealTemplates: make(map[string]*BlockTemplate),
 	}
 
 	proxy.updateShareTarget()
