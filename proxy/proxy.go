@@ -33,6 +33,8 @@ type ProxyServer struct {
 	randomxManager *RandomXManager
 	randomxMu      sync.RWMutex
 
+    templateMu     sync.RWMutex
+    currentTemplate *BlockTemplate
 	// Stratum
 	sessionsMu sync.RWMutex
 	sessions   map[*Session]struct{}
@@ -121,12 +123,12 @@ func (s *ProxyServer) startBackgroundJobs() {
 	}
 }
 
-func (s *ProxyServer) currentBlockTemplate() *BlockTemplate {
+/*func (s *ProxyServer) currentBlockTemplate() *BlockTemplate {
 	if t := s.blockTemplate.Load(); t != nil {
 		return t.(*BlockTemplate)
 	}
 	return nil
-}
+}*/
 
 func (s *ProxyServer) rpc() *rpc.RPCClient {
 	return s.upstreams[atomic.LoadInt32(&s.upstream)]

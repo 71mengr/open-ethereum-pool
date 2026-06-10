@@ -26,6 +26,8 @@ type BlockTemplate struct {
         sync.RWMutex
         Header               string
         Seed                 string
+      SealHash   string
+    SeedHash   string   // RandomX seed hash
         Target               string
         Difficulty           *big.Int
         Height               uint64
@@ -267,18 +269,19 @@ func (t *BlockTemplate) GetNetworkTarget() *big.Int {
 // submit shares so rarely that the pool hashrate stays at 0.00 H for normal
 // XMRig hashrates.
 const DefaultRandomXShareDifficulty int64 = 1000
-
+/*
 // GetPoolShareDifficulty returns the pool share difficulty advertised to miners.
 func (s *ProxyServer) GetPoolShareDifficulty() int64 {
-    if s.config.Proxy.RandomX.Enabled {
-        if s.config.Proxy.RandomX.ShareDifficulty > 0 {
-            return s.config.Proxy.RandomX.ShareDifficulty
+        if s.config.Proxy.RandomX.Enabled && s.config.Proxy.RandomX.ShareDifficulty > 0 {
+                return s.config.Proxy.RandomX.ShareDifficulty
         }
-        return DefaultRandomXShareDifficulty
-    }
-    return s.config.Proxy.Difficulty
+        if s.config.Proxy.Difficulty > 0 {
+                return s.config.Proxy.Difficulty
+        }
+        // Default to 1000 if nothing configured
+        return 1000
 }
-
+*/
 // GetPoolShareTarget returns the target that must be sent to miners for shares.
 //
 // The stratum target must be derived from GetPoolShareDifficulty, not the
