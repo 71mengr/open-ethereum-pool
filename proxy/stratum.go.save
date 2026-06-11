@@ -497,7 +497,6 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 		return false, false
 	}
 	// Remove 0x prefixes
-	nonceHex = remove0x(nonceHex)
 	sealHashHex = remove0x(sealHashHex)
 	mixDigestHex = remove0x(mixDigestHex)
 
@@ -508,16 +507,13 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 		return false, false
 	}
 
-	// Decode submitted nonce and normalize it to the 8 bytes submitted by XMRig.
-	nonce, err := hex.DecodeString(nonceHex)
+	// Convert nonce from big-endian (XMRig) to little-endian (RandomX)
+
 	if err != nil {
 		log.Printf("Invalid nonce: %v", err)
 		return false, false
 	}
 
-	if len(nonce) > 8 {
-		nonce = nonce[len(nonce)-8:]
-	}
 	// Decode submitted mix digest
 	submittedMix, err := hex.DecodeString(mixDigestHex)
 	if err != nil || len(submittedMix) != 32 {
@@ -526,54 +522,44 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 	}
 
 	// Check difficulty
-	if isZeroBytes(submittedMix) {
-		log.Printf("❌ REJECTED: Zero mix digest from %s@%s", login, ip)
-		return false, false
-	}
-
-	seedHashHex := t.SeedHash
-	if seedHashHex == "" {
-		seedHashHex = t.Seed
-	}
-	seedHash, err := hex.DecodeString(remove0x(seedHashHex))
-	if err != nil || len(seedHash) != 32 {
-		log.Printf("Invalid seed hash for share verification: %v", err)
-		return false, false
-	}
+	hashBig := new(big.Int).SetBytes(submittedMix)
 	poolDiff := s.GetPoolShareDifficulty()
 	if poolDiff <= 0 {
 		poolDiff = 1000
 	}
-	valid, verifiedHash, verifiedNonce, err := s.verifyRandomXShare(t, seedHash, sealHash, nonce, submittedMix, big.NewInt(poolDiff))
-	if err != nil {
-		log.Printf("Verification error: %v", err)
+	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+	targetBig := new(big.Int).Div(maxUint256, big.NewInt(poolDiff))
+
+	if hashBig.Cmp(targetBig) > 0 {
+		log.Printf("⚠️ Hash difficulty too low: %s > %s",
+			hashBig.String(), targetBig.String())
 		return false, false
 	}
 
-	if !valid {
-		if len(verifiedHash) > 0 {
-			hashDiff := randomXHashDifficulty(verifiedHash)
-			log.Printf("REJECTED | Hash Diff: %s < Pool Diff: %d", hashDiff.String(), poolDiff)
-		}
-		return false, false
+	shareDiff := big.NewInt(0)
+	if hashBig.Sign() > 0 {
+		shareDiff.Div(maxUint256, hashBig)
+	}
+	if shareDiff.Sign() == 0 {
+		shareDiff.SetInt64(poolDiff)
 	}
 
-	shareDiff := randomXHashDifficulty(verifiedHash)
-	verifiedNonceHex := nonceBytesToHex(verifiedNonce)
-	verifiedMixHex := hex.EncodeToString(verifiedHash)
 	log.Printf("✅ Share accepted - nonce=%s, hash=%x..., diff=%s",
-		verifiedNonceHex, verifiedHash[:8], shareDiff.String())
+		nonceHex, submittedMix[:8], shareDiff.String())
 
-	params := []string{verifiedNonceHex, add0x(sealHashHex), add0x(verifiedMixHex)}
+	params := []string{add0x(nonceHex), add0x(sealHashHex), add0x(mixDigestHex)}
 	isBlock := false
 	if t.Target != "" {
-		isBlock = randomXHashMeetsTarget(verifiedHash, t.Target)
+		targetBytes, err := hex.DecodeString(remove0x(t.Target))
+		if err == nil && len(targetBytes) > 0 {
+			isBlock = hashBig.Cmp(new(big.Int).SetBytes(targetBytes)) <= 0
+		}
 	}
 	if !isBlock && t.Difficulty != nil && t.Difficulty.Sign() > 0 {
 		isBlock = shareDiff.Cmp(t.Difficulty) >= 0
 	}
 
-	roundDiff := int64(poolDiff)
+	roundDiff := poolDiff
 	if t.Difficulty != nil && t.Difficulty.Sign() > 0 {
 		roundDiff = t.Difficulty.Int64()
 	}
@@ -604,6 +590,7 @@ func (s *ProxyServer) processTKMShare(login, id, ip string, t *BlockTemplate, no
 	}
 	return exist, true
 }
+
 // getSeedHashFromDaemon gets the seed hash for a specific block height
 func (s *ProxyServer) getSeedHashFromDaemon(height uint64) string {
 	client := &http.Client{Timeout: 5 * time.Second}

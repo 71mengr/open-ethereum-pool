@@ -82,7 +82,10 @@ func (s *ProxyServer) verifyRandomXShare(t *BlockTemplate, seedHash, headerHash,
 
         // 8-byte big-endian nonce (standard)
         nonce8 := make([]byte, 8)
-        copy(nonce8[8-len(nonce):], nonce)
+        if len(nonce) > len(nonce8) {
+                nonce = nonce[len(nonce)-len(nonce8):]
+        }
+        copy(nonce8[len(nonce8)-len(nonce):], nonce)
 
         expectedHash, err := cache.ComputeHash(headerHash, nonce8)
         if err != nil {

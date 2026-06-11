@@ -99,6 +99,24 @@ func TestRandomXStratumTargetDoesNotPanicForLowDifficulty(t *testing.T) {
 	}
 }
 
+func TestProcessTKMShareRejectsZeroMixDigest(t *testing.T) {
+	server := &ProxyServer{}
+	template := &BlockTemplate{}
+
+	exist, valid := server.processTKMShare(
+		"miner",
+		"worker",
+		"127.0.0.1",
+		template,
+		"0xc512000000000000",
+		"0xa393d02020eda4a393d02020eda4a393d02020eda4a393d02020eda4a393d020",
+		"0x0000000000000000000000000000000000000000000000000000000000000000",
+	)
+	if exist || valid {
+		t.Fatalf("expected zero mix digest share to be rejected, got exist=%v valid=%v", exist, valid)
+	}
+}
+
 func TestFormatRandomXTargetUsesCompactLittleEndianTarget(t *testing.T) {
 	got := formatRandomXTarget(1000)
 	want := randomXStratumTarget(1000)
