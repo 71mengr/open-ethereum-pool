@@ -58,6 +58,22 @@ func TestGetPoolShareTargetDoesNotUseLegacyDifficultyForRandomX(t *testing.T) {
 	}
 }
 
+func TestNormalizeNonceBytesPadsToEightBytes(t *testing.T) {
+	got := normalizeNonceBytes([]byte{0x12, 0x34})
+	want := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34}
+	if string(got) != string(want) {
+		t.Fatalf("expected normalized nonce %x, got %x", want, got)
+	}
+}
+
+func TestReverseNonceBytesUsesOppositeByteOrder(t *testing.T) {
+	got := reverseNonceBytes([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08})
+	want := []byte{0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01}
+	if string(got) != string(want) {
+		t.Fatalf("expected reversed nonce %x, got %x", want, got)
+	}
+}
+
 func TestNonceBytesToHexPadsToEightBytes(t *testing.T) {
 	got := nonceBytesToHex([]byte{0x12, 0x34})
 	want := "0x0000000000001234"

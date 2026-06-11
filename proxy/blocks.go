@@ -268,7 +268,7 @@ func (t *BlockTemplate) GetNetworkTarget() *big.Int {
 // miners.  Falling back to the legacy Ethash difficulty makes RandomX miners
 // submit shares so rarely that the pool hashrate stays at 0.00 H for normal
 // XMRig hashrates.
-const DefaultRandomXShareDifficulty int64 = 1000
+//const DefaultRandomXShareDifficulty int64 = 1000
 /*
 // GetPoolShareDifficulty returns the pool share difficulty advertised to miners.
 func (s *ProxyServer) GetPoolShareDifficulty() int64 {
